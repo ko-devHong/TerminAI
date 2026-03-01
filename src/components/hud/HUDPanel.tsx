@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { activeHudMetricsAtom, hudExpandModeAtom } from "@/atoms/hud";
 import { focusedTabAtom } from "@/atoms/spaces";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
+import { PROVIDERS } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import type { ProcessStatus } from "@/types";
 
@@ -93,7 +94,15 @@ export function HUDPanel() {
       )}
     >
       <div className="flex h-9 items-center gap-3 text-xs text-zinc-200">
-        <span className="font-medium">{activeTab?.provider ?? "No active tab"}</span>
+        {activeTab?.provider && PROVIDERS[activeTab.provider]?.icon ? (
+          <img
+            src={PROVIDERS[activeTab.provider].icon}
+            alt={activeTab.provider}
+            className="size-4 rounded object-contain"
+          />
+        ) : (
+          <span className="font-medium">{activeTab?.provider ?? "No active tab"}</span>
+        )}
 
         <span className="text-zinc-600">|</span>
         <span className="text-zinc-400">{metrics?.model ?? "-"}</span>

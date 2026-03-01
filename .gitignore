@@ -27,3 +27,8 @@ dist-ssr
 .agents
 .claude
 skills-lock.json
+
+# test
+test-results
+.playwright-mcp
+.cache

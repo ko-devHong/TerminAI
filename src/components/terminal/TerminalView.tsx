@@ -5,11 +5,13 @@ import { hudMetricsAtom } from "@/atoms/hud";
 import { terminalFontSizeAtom } from "@/atoms/settings";
 import { tabAtom } from "@/atoms/spaces";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
+import { extractScreenMetrics } from "@/lib/screen-metrics";
 import { invokeTauri, isTauriRuntimeAvailable } from "@/lib/tauri";
 import {
   getOrCreateTerminal,
   setTerminalCacheSessionId,
   terminalCacheMap,
+  upgradeToIMEInput,
   writeToTerminalCache,
 } from "@/lib/terminal-cache";
 import type { AIProvider, HUDMetrics, ProcessStatus } from "@/types";
@@ -116,6 +118,8 @@ export function TerminalView({ tabId }: TerminalViewProps) {
     } else {
       cached.terminal.open(container);
       cached.fitAddon.fit();
+      // Now that the terminal is open, upgrade to IME-aware input handling
+      upgradeToIMEInput(tabId, handleInput);
     }
 
     function onResize() {
@@ -249,58 +253,56 @@ export function TerminalView({ tabId }: TerminalViewProps) {
     [sessionId, setTabSessionAndStatus, tabId],
   );
 
-  // Handle metrics events from Rust backend
-  const handleMetrics = useCallback(
-    (update: {
-      activeTools?: string[];
-      model?: string | null;
-      cost?: number | null;
-      tokensIn?: number | null;
-      tokensOut?: number | null;
-      contextUsed?: number | null;
-      contextTotal?: number | null;
-    }) => {
-      if (!sessionId || !tabId) {
-        return;
-      }
+  // Periodically scan xterm.js rendered buffer for metrics
+  useEffect(() => {
+    if (!tabId || !sessionId) {
+      return;
+    }
 
+    function scanScreen() {
+      if (!tabId || !sessionId) return;
+
+      const cached = terminalCacheMap.get(tabId);
       const currentTab = store.get(tabAtom(tabId));
-      if (!currentTab) {
-        return;
-      }
+      if (!cached || !currentTab) return;
+
+      const screenData = extractScreenMetrics(cached.terminal, currentTab.provider);
 
       const existing = store.get(hudMetricsAtom(sessionId));
       const merged: HUDMetrics = {
         provider: currentTab.provider,
-        model: update.model ?? existing?.model ?? null,
+        model: screenData.model ?? existing?.model ?? null,
         contextWindow:
-          update.contextUsed != null && update.contextTotal != null
-            ? { used: update.contextUsed, total: update.contextTotal }
+          screenData.contextUsed != null && screenData.contextTotal != null
+            ? { used: screenData.contextUsed, total: screenData.contextTotal }
             : (existing?.contextWindow ?? null),
         tokens:
-          update.tokensIn != null || update.tokensOut != null
+          screenData.tokensIn != null || screenData.tokensOut != null
             ? {
-                input: update.tokensIn ?? existing?.tokens?.input ?? 0,
-                output: update.tokensOut ?? existing?.tokens?.output ?? 0,
+                input: screenData.tokensIn ?? existing?.tokens?.input ?? 0,
+                output: screenData.tokensOut ?? existing?.tokens?.output ?? 0,
               }
             : (existing?.tokens ?? null),
-        cost: update.cost ?? existing?.cost ?? null,
+        cost: screenData.cost ?? existing?.cost ?? null,
         rateLimit: existing?.rateLimit ?? null,
-        activeTools: update.activeTools?.length
-          ? update.activeTools
+        activeTools: screenData.activeTools.length
+          ? screenData.activeTools
           : (existing?.activeTools ?? []),
         sessionDuration: existing?.sessionDuration ?? 0,
         connectionStatus: "connected",
       };
 
       store.set(hudMetricsAtom(sessionId), merged);
-    },
-    [sessionId, store, tabId],
-  );
+    }
+
+    // Scan immediately, then every 3 seconds
+    scanScreen();
+    const interval = window.setInterval(scanScreen, 3_000);
+    return () => window.clearInterval(interval);
+  }, [tabId, sessionId, store]);
 
   useTauriEvent<string>(sessionId ? `pty-output-${sessionId}` : null, handleOutput);
   useTauriEvent<ProcessStatus>(sessionId ? `session-status-${sessionId}` : null, handleStatus);
-  useTauriEvent(sessionId ? `metrics-${sessionId}` : null, handleMetrics);
 
   return (
     <div

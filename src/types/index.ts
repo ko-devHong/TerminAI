@@ -7,6 +7,7 @@ export interface ProviderConfig {
   label: string;
   command: string;
   color: string;
+  icon: string;
   detectable: boolean;
 }
 

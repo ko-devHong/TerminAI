@@ -18,10 +18,13 @@ pub async fn spawn_session(
     cwd: String,
 ) -> Result<String, String> {
     let pty_system = native_pty_system();
+    let pty_rows = 40_u16;
+    let pty_cols = 120_u16;
+
     let pair = pty_system
         .openpty(PtySize {
-            rows: 40,
-            cols: 120,
+            rows: pty_rows,
+            cols: pty_cols,
             pixel_width: 0,
             pixel_height: 0,
         })
@@ -29,6 +32,9 @@ pub async fn spawn_session(
 
     let mut command = build_provider_command(&provider, &cwd)?;
     command.env("TERM", "xterm-256color");
+    command.env("COLUMNS", pty_cols.to_string());
+    command.env("LINES", pty_rows.to_string());
+    command.env("COLORTERM", "truecolor");
 
     let child = pair
         .slave

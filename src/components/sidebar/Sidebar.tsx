@@ -1,12 +1,22 @@
-import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
+import {
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  DragOverlay,
+  type DragStartEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
 import { useAtomValue, useSetAtom } from "jotai";
 import { FolderCog, Search } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { sidebarCollapsedAtom, sidebarWidthAtom } from "@/atoms/settings";
-import { moveTabAtom, spacesAtom } from "@/atoms/spaces";
+import { moveTabAtom, spacesAtom, tabAtom } from "@/atoms/spaces";
 import { NewTabButton } from "@/components/sidebar/NewTabButton";
 import { SpaceGroup } from "@/components/sidebar/SpaceGroup";
+import { TabItemContent } from "@/components/sidebar/TabItem";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const MIN_SIDEBAR_WIDTH = 180;
@@ -23,11 +33,19 @@ export function Sidebar({
   onOpenDefaultPathDialog,
   defaultCwd,
 }: SidebarProps) {
+  const pointerSensor = useSensor(PointerSensor, {
+    activationConstraint: { distance: 8 },
+  });
+  const sensors = useSensors(pointerSensor);
+
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+
   const spaces = useAtomValue(spacesAtom);
   const sidebarWidth = useAtomValue(sidebarWidthAtom);
   const sidebarCollapsed = useAtomValue(sidebarCollapsedAtom);
   const setSidebarWidth = useSetAtom(sidebarWidthAtom);
   const moveTab = useSetAtom(moveTabAtom);
+  const activeTabData = useAtomValue(tabAtom(activeTabId ?? "__none__"));
 
   const computedWidth = useMemo(() => {
     if (sidebarCollapsed) {
@@ -71,7 +89,15 @@ export function Sidebar({
     return null;
   }
 
+  function handleDragStart(event: DragStartEvent) {
+    const id = String(event.active.id);
+    if (id.startsWith("tab:")) {
+      setActiveTabId(id.slice(4));
+    }
+  }
+
   function handleDragEnd(event: DragEndEvent) {
+    setActiveTabId(null);
     const activeId = String(event.active.id);
     const overId = event.over ? String(event.over.id) : null;
 
@@ -127,7 +153,12 @@ export function Sidebar({
   }
 
   return (
-    <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
       <aside
         className="relative flex h-full w-(--sidebar-width) shrink-0 border-r"
         style={{ borderColor: "var(--color-border)", background: "var(--color-sidebar)" }}
@@ -171,6 +202,18 @@ export function Sidebar({
           onMouseDown={(event) => startResize(event.clientX)}
         />
       </aside>
+      <DragOverlay dropAnimation={null}>
+        {activeTabData ? (
+          <div className="w-(--sidebar-width) rounded-md shadow-lg shadow-black/40 ring-1 ring-zinc-600">
+            <TabItemContent
+              name={activeTabData.name}
+              provider={activeTabData.provider}
+              processStatus={activeTabData.processStatus}
+              isFocused={activeTabData.isFocused}
+            />
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   );
 }

@@ -2,6 +2,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { Plus } from "lucide-react";
 
 import { detectedProvidersAtom } from "@/atoms/providers";
+import { defaultCwdAtom } from "@/atoms/settings";
 import { createTabAtom, focusedTabAtom, spacesAtom } from "@/atoms/spaces";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +19,7 @@ const NEW_TAB_PROVIDERS: AIProvider[] = ["claude-code", "codex-cli", "gemini-cli
 export function NewTabButton() {
   const spaces = useAtomValue(spacesAtom);
   const focusedTab = useAtomValue(focusedTabAtom);
+  const defaultCwd = useAtomValue(defaultCwdAtom);
   const detectedProviders = useAtomValue(detectedProvidersAtom);
   const createTab = useSetAtom(createTabAtom);
 
@@ -28,7 +30,7 @@ export function NewTabButton() {
       return;
     }
 
-    createTab({ spaceId: nextSpaceId, provider, cwd: focusedTab?.cwd ?? "." });
+    createTab({ spaceId: nextSpaceId, provider, cwd: focusedTab?.cwd ?? defaultCwd });
   }
 
   return (
@@ -45,7 +47,10 @@ export function NewTabButton() {
         </Button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent className="w-48 border-zinc-700 bg-zinc-900 text-zinc-100">
+      <DropdownMenuContent
+        side="top"
+        className="w-52 border-zinc-700 bg-zinc-900 p-1 text-zinc-100"
+      >
         {NEW_TAB_PROVIDERS.map((provider) => {
           const isLoading = detectedProviders.state === "loading";
           const isDetectable = PROVIDERS[provider].detectable;
@@ -60,12 +65,19 @@ export function NewTabButton() {
             <DropdownMenuItem
               key={provider}
               disabled={isDisabled}
-              className="cursor-pointer data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
+              className="cursor-pointer gap-3 rounded-md px-3 py-2.5 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
               onSelect={() => handleCreateTab(provider)}
             >
-              {PROVIDERS[provider].label}
-              {!isInstalled ? " (미설치)" : ""}
-              {isLoading ? " (확인 중)" : ""}
+              {PROVIDERS[provider].icon ? (
+                <img
+                  src={PROVIDERS[provider].icon}
+                  alt=""
+                  className="size-5 shrink-0 rounded object-contain"
+                />
+              ) : null}
+              <span>{PROVIDERS[provider].label}</span>
+              {!isInstalled ? <span className="text-xs text-zinc-500">(미설치)</span> : null}
+              {isLoading ? <span className="text-xs text-zinc-500">(확인 중)</span> : null}
             </DropdownMenuItem>
           );
         })}

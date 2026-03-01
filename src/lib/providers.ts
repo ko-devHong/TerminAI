@@ -6,6 +6,7 @@ export const PROVIDERS: Record<AIProvider, ProviderConfig> = {
     label: "Claude Code",
     command: "claude",
     color: "#D97706",
+    icon: "/providers/claude-code.png",
     detectable: true,
   },
   "codex-cli": {
@@ -13,6 +14,7 @@ export const PROVIDERS: Record<AIProvider, ProviderConfig> = {
     label: "Codex CLI",
     command: "codex",
     color: "#10B981",
+    icon: "/providers/codex-cli.png",
     detectable: true,
   },
   "gemini-cli": {
@@ -20,6 +22,7 @@ export const PROVIDERS: Record<AIProvider, ProviderConfig> = {
     label: "Gemini CLI",
     command: "gemini",
     color: "#3B82F6",
+    icon: "/providers/gemini-cli.png",
     detectable: true,
   },
   custom: {
@@ -27,6 +30,7 @@ export const PROVIDERS: Record<AIProvider, ProviderConfig> = {
     label: "Custom CLI",
     command: "",
     color: "#71717A",
+    icon: "",
     detectable: false,
   },
 };

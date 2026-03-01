@@ -39,7 +39,9 @@ fn home_dir() -> Option<PathBuf> {
 fn resolve_cwd(cwd: &str) -> Result<String, String> {
     let trimmed = cwd.trim();
     if trimmed.is_empty() || trimmed == "." {
-        return Ok(".".to_string());
+        return home_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .ok_or_else(|| "failed to resolve home directory for '.'".to_string());
     }
 
     let expanded = if trimmed == "~" {
