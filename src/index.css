@@ -21,6 +21,23 @@
   --font-mono: "JetBrains Mono", "Fira Code", monospace;
 }
 
+:root {
+  --sidebar-width: 240px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--color-background);
+  color: var(--color-text-primary);
+}
+
 /* Status icon animations — CSS only (GPU accelerated, no JS overhead) */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
