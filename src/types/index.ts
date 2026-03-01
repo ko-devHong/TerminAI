@@ -10,6 +10,13 @@ export interface ProviderConfig {
   detectable: boolean;
 }
 
+export interface DetectedProvider {
+  id: AIProvider;
+  command: string;
+  found: boolean;
+  path: string | null;
+}
+
 export interface Tab {
   id: string;
   name: string;

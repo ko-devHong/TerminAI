@@ -1,4 +1,4 @@
-use crate::provider::{build_provider_command, detect_providers, DetectedProvider};
+use crate::provider::{build_provider_command, detect_providers as detect_provider_paths, DetectedProvider};
 use crate::state::{AppState, PtySession, SessionStatus};
 use portable_pty::{native_pty_system, PtySize};
 use std::io::{Read, Write};
@@ -145,8 +145,8 @@ pub async fn kill_session(
 }
 
 #[tauri::command]
-pub async fn detect_providers_command() -> Result<Vec<DetectedProvider>, String> {
-    Ok(detect_providers())
+pub async fn detect_providers() -> Result<Vec<DetectedProvider>, String> {
+    Ok(detect_provider_paths())
 }
 
 fn spawn_reader_task(app: AppHandle, session: Arc<PtySession>, mut reader: Box<dyn Read + Send>) {

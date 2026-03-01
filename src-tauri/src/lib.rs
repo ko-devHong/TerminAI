@@ -14,7 +14,7 @@ pub fn run() {
             commands::write_to_session,
             commands::resize_session,
             commands::kill_session,
-            commands::detect_providers_command,
+            commands::detect_providers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

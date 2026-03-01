@@ -1,6 +1,7 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { Plus } from "lucide-react";
 
+import { detectedProvidersAtom } from "@/atoms/providers";
 import { createTabAtom, focusedTabAtom, spacesAtom } from "@/atoms/spaces";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +18,7 @@ const NEW_TAB_PROVIDERS: AIProvider[] = ["claude-code", "codex-cli", "gemini-cli
 export function NewTabButton() {
   const spaces = useAtomValue(spacesAtom);
   const focusedTab = useAtomValue(focusedTabAtom);
+  const detectedProviders = useAtomValue(detectedProvidersAtom);
   const createTab = useSetAtom(createTabAtom);
 
   function handleCreateTab(provider: AIProvider) {
@@ -44,15 +46,29 @@ export function NewTabButton() {
       </DropdownMenuTrigger>
 
       <DropdownMenuContent className="w-48 border-zinc-700 bg-zinc-900 text-zinc-100">
-        {NEW_TAB_PROVIDERS.map((provider) => (
-          <DropdownMenuItem
-            key={provider}
-            className="cursor-pointer"
-            onClick={() => handleCreateTab(provider)}
-          >
-            {PROVIDERS[provider].label}
-          </DropdownMenuItem>
-        ))}
+        {NEW_TAB_PROVIDERS.map((provider) => {
+          const isLoading = detectedProviders.state === "loading";
+          const isDetectable = PROVIDERS[provider].detectable;
+          const isInstalled =
+            !isDetectable ||
+            detectedProviders.state !== "hasData" ||
+            detectedProviders.data.some((detected) => detected.id === provider && detected.found);
+
+          const isDisabled = isLoading || !isInstalled;
+
+          return (
+            <DropdownMenuItem
+              key={provider}
+              disabled={isDisabled}
+              className="cursor-pointer data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
+              onClick={() => handleCreateTab(provider)}
+            >
+              {PROVIDERS[provider].label}
+              {!isInstalled ? " (미설치)" : ""}
+              {isLoading ? " (확인 중)" : ""}
+            </DropdownMenuItem>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );
