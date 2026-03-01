@@ -1,3 +1,5 @@
+import { useDroppable } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useAtomValue, useSetAtom } from "jotai";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
@@ -11,6 +13,9 @@ interface SpaceGroupProps {
 
 export function SpaceGroup({ space }: SpaceGroupProps) {
   const toggleSpaceCollapsed = useSetAtom(toggleSpaceCollapsedAtom);
+  const { setNodeRef, isOver } = useDroppable({
+    id: `space:${space.id}`,
+  });
 
   return (
     <section className="space-y-1">
@@ -28,10 +33,18 @@ export function SpaceGroup({ space }: SpaceGroupProps) {
       </button>
 
       {!space.isCollapsed ? (
-        <div className="space-y-1 pl-2">
-          {space.tabIds.map((tabId) => (
-            <SpaceTabGuard key={tabId} tabId={tabId} />
-          ))}
+        <div
+          ref={setNodeRef}
+          className={`space-y-1 rounded-md pl-2 ${isOver ? "bg-zinc-800/40" : ""}`}
+        >
+          <SortableContext
+            items={space.tabIds.map((tabId) => `tab:${tabId}`)}
+            strategy={verticalListSortingStrategy}
+          >
+            {space.tabIds.map((tabId) => (
+              <SpaceTabGuard key={tabId} tabId={tabId} />
+            ))}
+          </SortableContext>
         </div>
       ) : null}
     </section>

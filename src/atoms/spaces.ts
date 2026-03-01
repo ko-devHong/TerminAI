@@ -22,8 +22,75 @@ export const focusedTabAtom = atom((get) => {
   return focusedTabId ? get(tabAtom(focusedTabId)) : null;
 });
 
+export const allTabsAtom = atom((get) => {
+  const spaces = get(spacesAtom);
+  const tabs: Tab[] = [];
+
+  for (const space of spaces) {
+    for (const id of space.tabIds) {
+      const tab = get(tabAtom(id));
+      if (tab) {
+        tabs.push(tab);
+      }
+    }
+  }
+
+  return tabs;
+});
+
 export const initializeWorkspaceAtom = atom(null, (get, set) => {
-  if (get(spacesAtom).length > 0) {
+  const spaces = get(spacesAtom);
+  if (spaces.length > 0) {
+    let hasFocused = false;
+    const focusedTabId = get(focusedTabIdAtom);
+    const now = Date.now();
+
+    for (const space of spaces) {
+      for (const id of space.tabIds) {
+        const existing = get(tabAtom(id));
+        if (existing) {
+          if (focusedTabId === id) {
+            hasFocused = true;
+          }
+          continue;
+        }
+
+        const provider: AIProvider = id.includes("gemini")
+          ? "gemini-cli"
+          : id.includes("codex")
+            ? "codex-cli"
+            : "claude-code";
+
+        const fallback: Tab = {
+          id,
+          name: id.replace(/^tab-/, ""),
+          provider,
+          spaceId: space.id,
+          isFavorite: get(favoriteTabIdsAtom).includes(id),
+          createdAt: now,
+          lastActivityAt: now,
+          isFocused: focusedTabId === id,
+          processStatus: "idle",
+          sessionId: null,
+        };
+        if (fallback.isFocused) {
+          hasFocused = true;
+        }
+        set(tabAtom(id), fallback);
+      }
+    }
+
+    if (!hasFocused) {
+      const fallbackTabId = spaces.find((space) => space.tabIds.length > 0)?.tabIds[0] ?? null;
+      set(focusedTabIdAtom, fallbackTabId);
+      if (fallbackTabId) {
+        const tab = get(tabAtom(fallbackTabId));
+        if (tab) {
+          set(tabAtom(fallbackTabId), { ...tab, isFocused: true });
+        }
+      }
+    }
+
     return;
   }
 
@@ -122,6 +189,92 @@ export const createTabAtom = atom(null, (get, set, payload: CreateTabPayload) =>
     ),
   );
 
+  set(focusTabAtom, newTabId);
+});
+
+interface MoveTabPayload {
+  tabId: string;
+  toSpaceId: string;
+  toIndex: number;
+}
+
+export const moveTabAtom = atom(null, (get, set, payload: MoveTabPayload) => {
+  const targetTab = get(tabAtom(payload.tabId));
+  if (!targetTab) {
+    return;
+  }
+
+  const spaces = get(spacesAtom);
+  const nextSpaces = spaces.map((space) => ({
+    ...space,
+    tabIds: space.tabIds.filter((id) => id !== payload.tabId),
+  }));
+
+  const targetSpace = nextSpaces.find((space) => space.id === payload.toSpaceId);
+  if (!targetSpace) {
+    return;
+  }
+
+  const safeIndex = Math.max(0, Math.min(payload.toIndex, targetSpace.tabIds.length));
+  targetSpace.tabIds.splice(safeIndex, 0, payload.tabId);
+  targetSpace.isCollapsed = false;
+
+  set(spacesAtom, nextSpaces);
+  set(tabAtom(payload.tabId), { ...targetTab, spaceId: payload.toSpaceId });
+});
+
+export const renameTabAtom = atom(null, (get, set, payload: { tabId: string; name: string }) => {
+  const tab = get(tabAtom(payload.tabId));
+  if (!tab) {
+    return;
+  }
+
+  const nextName = payload.name.trim();
+  if (!nextName) {
+    return;
+  }
+
+  set(tabAtom(payload.tabId), { ...tab, name: nextName });
+});
+
+export const duplicateTabAtom = atom(null, (get, set, tabId: string) => {
+  const sourceTab = get(tabAtom(tabId));
+  if (!sourceTab) {
+    return;
+  }
+
+  const newTabId = `tab-${crypto.randomUUID()}`;
+  const now = Date.now();
+  const duplicated: Tab = {
+    ...sourceTab,
+    id: newTabId,
+    name: `${sourceTab.name}-copy`,
+    isFocused: false,
+    sessionId: null,
+    processStatus: "idle",
+    createdAt: now,
+    lastActivityAt: now,
+  };
+
+  set(tabAtom(newTabId), duplicated);
+
+  const spaces = get(spacesAtom);
+  const nextSpaces = spaces.map((space) => {
+    if (space.id !== sourceTab.spaceId) {
+      return space;
+    }
+
+    const sourceIndex = space.tabIds.indexOf(tabId);
+    if (sourceIndex < 0) {
+      return space;
+    }
+
+    const nextTabIds = [...space.tabIds];
+    nextTabIds.splice(sourceIndex + 1, 0, newTabId);
+    return { ...space, tabIds: nextTabIds, isCollapsed: false };
+  });
+
+  set(spacesAtom, nextSpaces);
   set(focusTabAtom, newTabId);
 });
 
