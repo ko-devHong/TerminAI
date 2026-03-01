@@ -1,13 +1,12 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { useAtomValue, useSetAtom } from "jotai";
-import { AlertCircle, Circle, Copy, Edit3, Loader2, Trash2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { AlertCircle, Circle, Copy, FolderCog, Loader2, Trash2, X } from "lucide-react";
 
 import {
   closeTabAtom,
   duplicateTabAtom,
   focusTabAtom,
-  renameTabAtom,
+  openCwdEditorAtom,
   tabAtom,
 } from "@/atoms/spaces";
 import {
@@ -43,27 +42,11 @@ export function TabItem({ tabId }: TabItemProps) {
   const tab = useAtomValue(tabAtom(tabId));
   const focusTab = useSetAtom(focusTabAtom);
   const closeTab = useSetAtom(closeTabAtom);
-  const renameTab = useSetAtom(renameTabAtom);
   const duplicateTab = useSetAtom(duplicateTabAtom);
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState("");
-  const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const openCwdEditor = useSetAtom(openCwdEditorAtom);
   const { attributes, listeners, setNodeRef, isDragging } = useSortable({
     id: `tab:${tabId}`,
   });
-
-  useEffect(() => {
-    if (tab) {
-      setNameDraft(tab.name);
-    }
-  }, [tab]);
-
-  useEffect(() => {
-    if (isEditingName) {
-      renameInputRef.current?.focus();
-      renameInputRef.current?.select();
-    }
-  }, [isEditingName]);
 
   if (!tab) {
     return null;
@@ -82,18 +65,11 @@ export function TabItem({ tabId }: TabItemProps) {
     closeTab(currentTab.id);
   }
 
-  function commitNameEdit() {
-    renameTab({ tabId: currentTab.id, name: nameDraft });
-    setIsEditingName(false);
-  }
-
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
           ref={setNodeRef}
-          {...attributes}
-          {...listeners}
           className={cn(
             "tab-item group flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors",
             currentTab.isFocused
@@ -104,54 +80,40 @@ export function TabItem({ tabId }: TabItemProps) {
         >
           <button
             type="button"
+            {...attributes}
+            {...listeners}
             onClick={() => focusTab(currentTab.id)}
-            onDoubleClick={() => setIsEditingName(true)}
-            className="flex min-w-0 flex-1 items-center gap-2 text-left"
-            title={`${currentTab.name} (${currentTab.provider})`}
+            className="flex min-w-0 flex-1 cursor-grab items-center gap-2 text-left active:cursor-grabbing"
+            title={`${currentTab.name} (${currentTab.provider})\n${currentTab.cwd}`}
           >
             <StatusIcon status={currentTab.processStatus} />
-            {isEditingName ? (
-              <input
-                ref={renameInputRef}
-                value={nameDraft}
-                onChange={(event) => setNameDraft(event.target.value)}
-                onBlur={commitNameEdit}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    commitNameEdit();
-                  }
-                  if (event.key === "Escape") {
-                    setNameDraft(currentTab.name);
-                    setIsEditingName(false);
-                  }
-                }}
-                className="h-6 w-full rounded border border-zinc-700 bg-zinc-900 px-1 text-xs text-zinc-50 outline-none"
-              />
-            ) : (
-              <span className="truncate">{currentTab.name}</span>
-            )}
+            <span className="truncate">{currentTab.name}</span>
           </button>
 
           <button
             type="button"
             aria-label={`Close tab ${currentTab.name}`}
-            onClick={() => {
+            onMouseDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
               void handleClose();
             }}
-            className="rounded p-1 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-700 hover:text-zinc-100"
+            className="shrink-0 rounded p-1 text-zinc-400 opacity-100 transition hover:bg-zinc-700 hover:text-zinc-100"
           >
             <X className="size-3" />
           </button>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-44 border-zinc-700 bg-zinc-900 text-zinc-100">
-        <ContextMenuItem onSelect={() => setIsEditingName(true)}>
-          <Edit3 className="size-3.5" />
-          Rename
-        </ContextMenuItem>
         <ContextMenuItem onSelect={() => duplicateTab(currentTab.id)}>
           <Copy className="size-3.5" />
           Duplicate
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => openCwdEditor(currentTab.id)}>
+          <FolderCog className="size-3.5" />
+          Set Working Directory...
         </ContextMenuItem>
         <ContextMenuItem
           variant="destructive"

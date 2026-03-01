@@ -4,3 +4,4 @@ export const sidebarWidthAtom = atomWithStorage<number>("terminai:sidebar-width"
 export const sidebarCollapsedAtom = atomWithStorage<boolean>("terminai:sidebar-collapsed", false);
 export const terminalFontSizeAtom = atomWithStorage<number>("terminai:terminal-font-size", 14);
 export const themeAtom = atomWithStorage<"dark" | "light">("terminai:theme", "dark");
+export const defaultCwdAtom = atomWithStorage<string>("terminai:default-cwd", ".");

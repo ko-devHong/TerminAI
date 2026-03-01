@@ -1,6 +1,6 @@
 import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Search } from "lucide-react";
+import { FolderCog, Search } from "lucide-react";
 import { useMemo } from "react";
 
 import { sidebarCollapsedAtom, sidebarWidthAtom } from "@/atoms/settings";
@@ -14,9 +14,15 @@ const MAX_SIDEBAR_WIDTH = 360;
 
 interface SidebarProps {
   onOpenCommandPalette?: () => void;
+  onOpenDefaultPathDialog?: () => void;
+  defaultCwd?: string;
 }
 
-export function Sidebar({ onOpenCommandPalette }: SidebarProps) {
+export function Sidebar({
+  onOpenCommandPalette,
+  onOpenDefaultPathDialog,
+  defaultCwd,
+}: SidebarProps) {
   const spaces = useAtomValue(spacesAtom);
   const sidebarWidth = useAtomValue(sidebarWidthAtom);
   const sidebarCollapsed = useAtomValue(sidebarCollapsedAtom);
@@ -131,6 +137,16 @@ export function Sidebar({ onOpenCommandPalette }: SidebarProps) {
           >
             <Search className="size-3" />
             <span>Search / Cmd+K</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenDefaultPathDialog}
+            className="flex h-8 items-center gap-2 rounded-md border border-zinc-800 px-2 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+            title={`Default path for new tabs: ${defaultCwd ?? "."}`}
+          >
+            <FolderCog className="size-3" />
+            <span className="truncate">Default Path: {defaultCwd ?? "."}</span>
           </button>
 
           <ScrollArea className="h-full">

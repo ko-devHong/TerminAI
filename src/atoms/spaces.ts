@@ -10,6 +10,7 @@ import {
 import type { AIProvider, Space, Tab } from "@/types";
 
 export const spacesAtom = atomWithStorage<Space[]>("terminai:spaces", []);
+export const tabCwdsAtom = atomWithStorage<Record<string, string>>("terminai:tab-cwds", {});
 
 export const tabAtom = atomFamily((_id: string) => atom<Tab | null>(null));
 
@@ -21,6 +22,13 @@ export const focusedTabAtom = atom((get) => {
   const focusedTabId = get(focusedTabIdAtom);
   return focusedTabId ? get(tabAtom(focusedTabId)) : null;
 });
+
+interface CwdEditorState {
+  open: boolean;
+  tabId: string | null;
+}
+
+export const cwdEditorAtom = atom<CwdEditorState>({ open: false, tabId: null });
 
 export const allTabsAtom = atom((get) => {
   const spaces = get(spacesAtom);
@@ -40,7 +48,10 @@ export const allTabsAtom = atom((get) => {
 
 export const initializeWorkspaceAtom = atom(null, (get, set) => {
   const spaces = get(spacesAtom);
+  const tabCwds = get(tabCwdsAtom);
   if (spaces.length > 0) {
+    const nextTabCwds = { ...tabCwds };
+    let shouldPersistCwds = false;
     let hasFocused = false;
     const focusedTabId = get(focusedTabIdAtom);
     const now = Date.now();
@@ -49,6 +60,14 @@ export const initializeWorkspaceAtom = atom(null, (get, set) => {
       for (const id of space.tabIds) {
         const existing = get(tabAtom(id));
         if (existing) {
+          const persistedCwd = tabCwds[id];
+          if (!existing.cwd || (persistedCwd && existing.cwd !== persistedCwd)) {
+            set(tabAtom(id), { ...existing, cwd: persistedCwd ?? existing.cwd ?? "." });
+          }
+          if (!persistedCwd && existing.cwd) {
+            nextTabCwds[id] = existing.cwd;
+            shouldPersistCwds = true;
+          }
           if (focusedTabId === id) {
             hasFocused = true;
           }
@@ -65,6 +84,7 @@ export const initializeWorkspaceAtom = atom(null, (get, set) => {
           id,
           name: id.replace(/^tab-/, ""),
           provider,
+          cwd: tabCwds[id] ?? ".",
           spaceId: space.id,
           isFavorite: get(favoriteTabIdsAtom).includes(id),
           createdAt: now,
@@ -77,7 +97,13 @@ export const initializeWorkspaceAtom = atom(null, (get, set) => {
           hasFocused = true;
         }
         set(tabAtom(id), fallback);
+        nextTabCwds[id] = fallback.cwd;
+        shouldPersistCwds = true;
       }
+    }
+
+    if (shouldPersistCwds) {
+      set(tabCwdsAtom, nextTabCwds);
     }
 
     if (!hasFocused) {
@@ -97,6 +123,7 @@ export const initializeWorkspaceAtom = atom(null, (get, set) => {
   set(spacesAtom, INITIAL_SPACES);
   set(favoriteTabIdsAtom, INITIAL_FAVORITE_TAB_IDS);
   set(focusedTabIdAtom, INITIAL_FOCUSED_TAB_ID);
+  set(tabCwdsAtom, Object.fromEntries(INITIAL_TABS.map((tab) => [tab.id, tab.cwd || "."])));
 
   for (const tab of INITIAL_TABS) {
     set(tabAtom(tab.id), tab);
@@ -151,6 +178,7 @@ export const focusTabAtom = atom(null, (get, set, tabId: string) => {
 interface CreateTabPayload {
   spaceId: string;
   provider: AIProvider;
+  cwd?: string;
 }
 
 function providerToDefaultName(provider: AIProvider): string {
@@ -168,6 +196,7 @@ export const createTabAtom = atom(null, (get, set, payload: CreateTabPayload) =>
     id: newTabId,
     name: providerToDefaultName(payload.provider),
     provider: payload.provider,
+    cwd: payload.cwd?.trim() || ".",
     spaceId: payload.spaceId,
     isFavorite: false,
     createdAt: now,
@@ -178,6 +207,7 @@ export const createTabAtom = atom(null, (get, set, payload: CreateTabPayload) =>
   };
 
   set(tabAtom(newTabId), nextTab);
+  set(tabCwdsAtom, { ...get(tabCwdsAtom), [newTabId]: nextTab.cwd });
 
   const spaces = get(spacesAtom);
   set(
@@ -237,6 +267,31 @@ export const renameTabAtom = atom(null, (get, set, payload: { tabId: string; nam
   set(tabAtom(payload.tabId), { ...tab, name: nextName });
 });
 
+export const setTabCwdAtom = atom(null, (get, set, payload: { tabId: string; cwd: string }) => {
+  const tab = get(tabAtom(payload.tabId));
+  if (!tab) {
+    return;
+  }
+
+  const nextCwd = payload.cwd.trim() || ".";
+  set(tabAtom(payload.tabId), {
+    ...tab,
+    cwd: nextCwd,
+    sessionId: null,
+    processStatus: "idle",
+    lastActivityAt: Date.now(),
+  });
+  set(tabCwdsAtom, { ...get(tabCwdsAtom), [payload.tabId]: nextCwd });
+});
+
+export const openCwdEditorAtom = atom(null, (_get, set, tabId: string) => {
+  set(cwdEditorAtom, { open: true, tabId });
+});
+
+export const closeCwdEditorAtom = atom(null, (_get, set) => {
+  set(cwdEditorAtom, { open: false, tabId: null });
+});
+
 export const duplicateTabAtom = atom(null, (get, set, tabId: string) => {
   const sourceTab = get(tabAtom(tabId));
   if (!sourceTab) {
@@ -257,6 +312,7 @@ export const duplicateTabAtom = atom(null, (get, set, tabId: string) => {
   };
 
   set(tabAtom(newTabId), duplicated);
+  set(tabCwdsAtom, { ...get(tabCwdsAtom), [newTabId]: duplicated.cwd });
 
   const spaces = get(spacesAtom);
   const nextSpaces = spaces.map((space) => {
@@ -299,6 +355,9 @@ export const closeTabAtom = atom(null, (get, set, tabId: string) => {
     favoriteTabIds.filter((id) => id !== tabId),
   );
   set(tabAtom(tabId), null);
+  const nextTabCwds = { ...get(tabCwdsAtom) };
+  delete nextTabCwds[tabId];
+  set(tabCwdsAtom, nextTabCwds);
 
   if (focusedTabId !== tabId) {
     return;

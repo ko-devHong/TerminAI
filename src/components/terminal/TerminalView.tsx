@@ -1,5 +1,4 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import { useAtomValue, useStore } from "jotai";
 import { useCallback, useEffect, useRef } from "react";
@@ -89,12 +88,7 @@ export function TerminalView({ tabId }: TerminalViewProps) {
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
 
-    try {
-      const webglAddon = new WebglAddon();
-      terminal.loadAddon(webglAddon);
-    } catch {
-      // WebGL may fail on unsupported environments.
-    }
+    // Keep default renderer for IME stability (Korean/Japanese/Chinese input).
 
     terminal.open(containerRef.current);
     fitAddon.fit();
@@ -105,7 +99,7 @@ export function TerminalView({ tabId }: TerminalViewProps) {
         return;
       }
 
-      void invokeTauri<void>("write_to_session", { sessionId, data });
+      void invokeTauri<void>("write_to_session", { sessionId, data: data.normalize("NFC") });
     });
 
     function onResize() {
@@ -180,7 +174,7 @@ export function TerminalView({ tabId }: TerminalViewProps) {
       try {
         const spawnedSessionId = await invokeTauri<string>("spawn_session", {
           provider: activeTab.provider,
-          cwd: ".",
+          cwd: activeTab.cwd,
         });
 
         currentSessionIdRef.current = spawnedSessionId;

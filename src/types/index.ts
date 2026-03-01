@@ -21,6 +21,7 @@ export interface Tab {
   id: string;
   name: string;
   provider: AIProvider;
+  cwd: string;
   spaceId: string;
   isFavorite: boolean;
   createdAt: number;

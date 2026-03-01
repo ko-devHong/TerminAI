@@ -152,19 +152,61 @@ pub async fn detect_providers() -> Result<Vec<DetectedProvider>, String> {
 fn spawn_reader_task(app: AppHandle, session: Arc<PtySession>, mut reader: Box<dyn Read + Send>) {
     task::spawn_blocking(move || {
         let mut buf = vec![0_u8; 16 * 1024];
+        let mut pending_utf8: Vec<u8> = Vec::new();
 
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
+                    if !pending_utf8.is_empty() {
+                        let tail = String::from_utf8_lossy(&pending_utf8).to_string();
+                        let event_name = format!("pty-output-{}", session.id);
+                        let _ = app.emit(event_name.as_str(), tail);
+                        pending_utf8.clear();
+                    }
                     let _ = emit_status(&app, &session.id, SessionStatus::Disconnected);
                     break;
                 }
                 Ok(size) => {
-                    let chunk = String::from_utf8_lossy(&buf[..size]).to_string();
+                    pending_utf8.extend_from_slice(&buf[..size]);
+                    let mut chunk = String::new();
+
+                    loop {
+                        match std::str::from_utf8(&pending_utf8) {
+                            Ok(valid) => {
+                                chunk.push_str(valid);
+                                pending_utf8.clear();
+                                break;
+                            }
+                            Err(error) => {
+                                let valid_up_to = error.valid_up_to();
+                                if valid_up_to > 0 {
+                                    chunk.push_str(&String::from_utf8_lossy(&pending_utf8[..valid_up_to]));
+                                    pending_utf8.drain(..valid_up_to);
+                                }
+
+                                if error.error_len().is_none() {
+                                    break;
+                                }
+
+                                if !pending_utf8.is_empty() {
+                                    chunk.push('�');
+                                    pending_utf8.drain(..1);
+                                }
+                            }
+                        }
+                    }
+
                     let event_name = format!("pty-output-{}", session.id);
-                    let _ = app.emit(event_name.as_str(), chunk);
+                    if !chunk.is_empty() {
+                        let _ = app.emit(event_name.as_str(), chunk);
+                    }
                 }
                 Err(_) => {
+                    if !pending_utf8.is_empty() {
+                        let tail = String::from_utf8_lossy(&pending_utf8).to_string();
+                        let event_name = format!("pty-output-{}", session.id);
+                        let _ = app.emit(event_name.as_str(), tail);
+                    }
                     let _ = emit_status(&app, &session.id, SessionStatus::Error);
                     break;
                 }

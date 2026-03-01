@@ -28,7 +28,7 @@ export function NewTabButton() {
       return;
     }
 
-    createTab({ spaceId: nextSpaceId, provider });
+    createTab({ spaceId: nextSpaceId, provider, cwd: focusedTab?.cwd ?? "." });
   }
 
   return (
