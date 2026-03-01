@@ -4,12 +4,15 @@ use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionStatus {
+    Idle,
     Running,
-    Disconnected,
+    Thinking,
+    Waiting,
     Error,
+    Disconnected,
 }
 
 pub struct PtySession {

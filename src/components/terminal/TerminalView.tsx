@@ -14,7 +14,7 @@ import {
   upgradeToIMEInput,
   writeToTerminalCache,
 } from "@/lib/terminal-cache";
-import type { AIProvider, HUDMetrics, ProcessStatus } from "@/types";
+import type { AIProvider, HUDMetrics, MetricUpdate, ProcessStatus } from "@/types";
 
 import "@xterm/xterm/css/xterm.css";
 
@@ -253,6 +253,42 @@ export function TerminalView({ tabId }: TerminalViewProps) {
     [sessionId, setTabSessionAndStatus, tabId],
   );
 
+  const handleMetrics = useCallback(
+    (update: MetricUpdate) => {
+      if (!tabId || !sessionId) return;
+      const currentTab = store.get(tabAtom(tabId));
+      if (!currentTab) return;
+
+      const existing = store.get(hudMetricsAtom(sessionId));
+      const merged: HUDMetrics = {
+        provider: currentTab.provider,
+        model: update.model ?? existing?.model ?? null,
+        contextWindow:
+          update.contextUsed != null && update.contextTotal != null
+            ? { used: update.contextUsed, total: update.contextTotal }
+            : (existing?.contextWindow ?? null),
+        tokens:
+          update.tokensIn != null || update.tokensOut != null
+            ? {
+                input: update.tokensIn ?? existing?.tokens?.input ?? 0,
+                output: update.tokensOut ?? existing?.tokens?.output ?? 0,
+              }
+            : (existing?.tokens ?? null),
+        cost: update.cost ?? existing?.cost ?? null,
+        rateLimit: existing?.rateLimit ?? null,
+        billing: existing?.billing ?? null,
+        plan: existing?.plan ?? null,
+        hasCredentials: existing?.hasCredentials ?? false,
+        activeTools: update.activeTools.length ? update.activeTools : (existing?.activeTools ?? []),
+        sessionDuration: existing?.sessionDuration ?? 0,
+        detailedStatus: (update.status as ProcessStatus) ?? existing?.detailedStatus ?? "idle",
+        connectionStatus: "connected",
+      };
+      store.set(hudMetricsAtom(sessionId), merged);
+    },
+    [store, tabId, sessionId],
+  );
+
   // Periodically scan xterm.js rendered buffer for metrics
   useEffect(() => {
     if (!tabId || !sessionId) {
@@ -285,10 +321,14 @@ export function TerminalView({ tabId }: TerminalViewProps) {
             : (existing?.tokens ?? null),
         cost: screenData.cost ?? existing?.cost ?? null,
         rateLimit: existing?.rateLimit ?? null,
+        billing: existing?.billing ?? null,
+        plan: existing?.plan ?? null,
+        hasCredentials: existing?.hasCredentials ?? false,
         activeTools: screenData.activeTools.length
           ? screenData.activeTools
           : (existing?.activeTools ?? []),
         sessionDuration: existing?.sessionDuration ?? 0,
+        detailedStatus: screenData.detectedStatus ?? existing?.detailedStatus ?? "idle",
         connectionStatus: "connected",
       };
 
@@ -303,6 +343,7 @@ export function TerminalView({ tabId }: TerminalViewProps) {
 
   useTauriEvent<string>(sessionId ? `pty-output-${sessionId}` : null, handleOutput);
   useTauriEvent<ProcessStatus>(sessionId ? `session-status-${sessionId}` : null, handleStatus);
+  useTauriEvent<MetricUpdate>(sessionId ? `metrics-${sessionId}` : null, handleMetrics);
 
   return (
     <div

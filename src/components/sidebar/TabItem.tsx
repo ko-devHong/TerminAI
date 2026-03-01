@@ -59,7 +59,7 @@ export function TabItemContent({
 }
 
 function StatusOverlay({ status }: { status: string }) {
-  if (status === "processing") {
+  if (status === "thinking") {
     return (
       <span className="absolute -right-0.5 -bottom-0.5">
         <Loader2 className="size-2 animate-spin text-amber-500" />

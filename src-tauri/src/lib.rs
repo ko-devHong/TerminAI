@@ -2,6 +2,7 @@ mod commands;
 mod metrics;
 mod provider;
 mod state;
+mod usage;
 
 use crate::state::AppState;
 
@@ -16,6 +17,7 @@ pub fn run() {
             commands::resize_session,
             commands::kill_session,
             commands::detect_providers,
+            commands::fetch_provider_usage,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

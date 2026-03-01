@@ -43,7 +43,7 @@ export const INITIAL_TABS: Tab[] = [
     createdAt: now,
     lastActivityAt: now,
     isFocused: false,
-    processStatus: "processing",
+    processStatus: "running",
     sessionId: null,
   },
   {

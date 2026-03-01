@@ -1,6 +1,6 @@
 export type AIProvider = "claude-code" | "codex-cli" | "gemini-cli" | "custom";
 
-export type ProcessStatus = "idle" | "running" | "processing" | "error" | "disconnected";
+export type ProcessStatus = "idle" | "running" | "thinking" | "waiting" | "error" | "disconnected";
 
 export interface ProviderConfig {
   id: AIProvider;
@@ -40,14 +40,46 @@ export interface Space {
   isCollapsed: boolean;
 }
 
+export interface ProviderUsage {
+  rateLimit: {
+    fiveHourPercent: number;
+    sevenDayPercent: number;
+    fiveHourResetSeconds: number;
+    sevenDayResetSeconds: number;
+  } | null;
+  billing: { usedDollars: number; limitDollars: number | null } | null;
+  plan: string | null;
+  hasCredentials: boolean;
+}
+
 export interface HUDMetrics {
   provider: AIProvider;
   model: string | null;
   contextWindow: { used: number; total: number } | null;
   tokens: { input: number; output: number } | null;
   cost: number | null;
-  rateLimit: { remaining: number; total: number } | null;
+  rateLimit: {
+    fiveHourPercent: number;
+    sevenDayPercent: number;
+    fiveHourResetSeconds: number;
+    sevenDayResetSeconds: number;
+  } | null;
+  billing: { usedDollars: number; limitDollars: number | null } | null;
+  plan: string | null;
+  hasCredentials: boolean;
   activeTools: string[];
   sessionDuration: number;
+  detailedStatus: ProcessStatus;
   connectionStatus: "connected" | "disconnected" | "error";
+}
+
+export interface MetricUpdate {
+  activeTools: string[];
+  model: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  cost: number | null;
+  contextUsed: number | null;
+  contextTotal: number | null;
+  status: string | null;
 }

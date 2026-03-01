@@ -1,6 +1,6 @@
 import type { Terminal } from "@xterm/xterm";
 
-import type { AIProvider } from "@/types";
+import type { AIProvider, ProcessStatus } from "@/types";
 
 export interface ScreenMetricResult {
   model: string | null;
@@ -10,6 +10,7 @@ export interface ScreenMetricResult {
   contextUsed: number | null;
   contextTotal: number | null;
   activeTools: string[];
+  detectedStatus: ProcessStatus | null;
 }
 
 // ─── Shared patterns ──────────────────────────────────────
@@ -34,6 +35,15 @@ const CODEX_MODEL_RE = /\b(gpt-4o|o[1-4](?:-\w+)?|codex\b)/i;
 
 const GEMINI_MODEL_RE = /\b(gemini[- ][\d.]+-(?:pro|flash|ultra)(?:[- ]\w+)?)\b/i;
 const GEMINI_GENERATING_RE = /Generating with\s+([\w.-]+)/i;
+
+// ─── Status Detection ────────────────────────────────────
+
+const STATUS_WAITING_RE =
+  /(?:do you want to proceed|[(（]\s*y\s*\/\s*n\s*[)）]|permission|approve|allow\s+(?:tool|this))/i;
+const STATUS_THINKING_RE = /(?:thinking|ctrl\+c to interrupt|reasoning)/i;
+const STATUS_ERROR_RE = /(?:error:|failed:|exception:|panic:|rate limit exceeded)/i;
+const STATUS_RUNNING_RE = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷]|⏺/;
+const STATUS_IDLE_RE = /[❯$>]\s*$/m;
 
 function parseKNumber(numStr: string, context: string): number {
   const n = Number.parseFloat(numStr);
@@ -63,6 +73,18 @@ function readTerminalLines(terminal: Terminal, lineCount: number): string[] {
   return lines;
 }
 
+function detectStatus(lines: string[]): ProcessStatus | null {
+  const recentLines = lines.slice(-5).join("\n");
+
+  if (STATUS_WAITING_RE.test(recentLines)) return "waiting";
+  if (STATUS_ERROR_RE.test(recentLines)) return "error";
+  if (STATUS_THINKING_RE.test(recentLines)) return "thinking";
+  if (STATUS_RUNNING_RE.test(recentLines)) return "running";
+  if (STATUS_IDLE_RE.test(recentLines)) return "idle";
+
+  return null;
+}
+
 function parseClaude(lines: string[]): ScreenMetricResult {
   const result: ScreenMetricResult = {
     model: null,
@@ -72,6 +94,7 @@ function parseClaude(lines: string[]): ScreenMetricResult {
     contextUsed: null,
     contextTotal: null,
     activeTools: [],
+    detectedStatus: null,
   };
 
   const text = lines.join("\n");
@@ -131,6 +154,9 @@ function parseClaude(lines: string[]): ScreenMetricResult {
     result.activeTools = tools;
   }
 
+  // Status
+  result.detectedStatus = detectStatus(lines);
+
   return result;
 }
 
@@ -143,6 +169,7 @@ function parseCodex(lines: string[]): ScreenMetricResult {
     contextUsed: null,
     contextTotal: null,
     activeTools: [],
+    detectedStatus: null,
   };
 
   const text = lines.join("\n");
@@ -157,6 +184,8 @@ function parseCodex(lines: string[]): ScreenMetricResult {
     result.cost = Number.parseFloat(costMatch[1]);
   }
 
+  result.detectedStatus = detectStatus(lines);
+
   return result;
 }
 
@@ -169,6 +198,7 @@ function parseGemini(lines: string[]): ScreenMetricResult {
     contextUsed: null,
     contextTotal: null,
     activeTools: [],
+    detectedStatus: null,
   };
 
   const text = lines.join("\n");
@@ -183,6 +213,8 @@ function parseGemini(lines: string[]): ScreenMetricResult {
       result.model = modelMatch[1];
     }
   }
+
+  result.detectedStatus = detectStatus(lines);
 
   return result;
 }
@@ -214,6 +246,7 @@ export function extractScreenMetrics(
         contextUsed: null,
         contextTotal: null,
         activeTools: [],
+        detectedStatus: null,
       };
   }
 }

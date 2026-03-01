@@ -12,6 +12,7 @@ pub struct MetricUpdate {
     pub cost: Option<f64>,
     pub context_used: Option<u64>,
     pub context_total: Option<u64>,
+    pub status: Option<String>,
 }
 
 impl MetricUpdate {
@@ -24,6 +25,7 @@ impl MetricUpdate {
             cost: None,
             context_used: None,
             context_total: None,
+            status: None,
         }
     }
 }
@@ -40,6 +42,43 @@ static ANSI_RE: LazyLock<Regex> =
 
 fn strip_ansi(s: &str) -> String {
     ANSI_RE.replace_all(s, "").to_string()
+}
+
+// ─── Status Detection (shared across providers) ─────────
+
+static STATUS_WAITING_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(do you want to proceed|[\(（]\s*y\s*/\s*n\s*[\)）]|permission|approve|allow\s+(tool|this)|press enter to confirm|confirm\?)").unwrap()
+});
+
+static STATUS_THINKING_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(thinking|ctrl\+c to interrupt|reasoning)").unwrap()
+});
+
+static STATUS_ERROR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(error:|failed:|exception:|panic:|rate limit exceeded|APIError|unauthorized|forbidden)").unwrap()
+});
+
+static STATUS_RUNNING_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷]|⏺").unwrap()
+});
+
+static STATUS_IDLE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[❯$>]\s*$").unwrap());
+
+fn detect_status(clean: &str) -> Option<String> {
+    if STATUS_WAITING_RE.is_match(clean) {
+        Some("waiting".to_string())
+    } else if STATUS_ERROR_RE.is_match(clean) {
+        Some("error".to_string())
+    } else if STATUS_THINKING_RE.is_match(clean) {
+        Some("thinking".to_string())
+    } else if STATUS_RUNNING_RE.is_match(clean) {
+        Some("running".to_string())
+    } else if STATUS_IDLE_RE.is_match(clean) {
+        Some("idle".to_string())
+    } else {
+        None
+    }
 }
 
 // ─── Claude Code Parser ────────────────────────────────────
@@ -179,6 +218,11 @@ impl MetricParser for ClaudeMetricParser {
             }
         }
 
+        let detected_status = detect_status(&clean);
+        if detected_status.is_some() {
+            changed = true;
+        }
+
         if changed {
             update.active_tools.clone_from(&self.active_tools);
             update.model.clone_from(&self.last_model);
@@ -187,6 +231,7 @@ impl MetricParser for ClaudeMetricParser {
             update.tokens_out = self.tokens_out;
             update.context_used = self.context_used;
             update.context_total = self.context_total;
+            update.status = detected_status;
             Some(update)
         } else {
             None
@@ -243,9 +288,15 @@ impl MetricParser for CodexMetricParser {
             }
         }
 
+        let detected_status = detect_status(&clean);
+        if detected_status.is_some() {
+            changed = true;
+        }
+
         if changed {
             update.active_tools.clone_from(&self.active_tools);
             update.cost = Some(self.cumulative_cost);
+            update.status = detected_status;
             Some(update)
         } else {
             None
@@ -288,8 +339,14 @@ impl MetricParser for GeminiMetricParser {
             changed = true;
         }
 
+        let detected_status = detect_status(&clean);
+        if detected_status.is_some() {
+            changed = true;
+        }
+
         if changed {
             update.active_tools.clone_from(&self.active_tools);
+            update.status = detected_status;
             Some(update)
         } else {
             None
@@ -303,5 +360,81 @@ pub fn create_parser(provider: &str) -> Box<dyn MetricParser> {
         "codex-cli" => Box::new(CodexMetricParser::new()),
         "gemini-cli" => Box::new(GeminiMetricParser::new()),
         _ => Box::new(GeminiMetricParser::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_status_waiting() {
+        assert_eq!(detect_status("Do you want to proceed? (y/n)"), Some("waiting".to_string()));
+        assert_eq!(detect_status("Allow tool execution?"), Some("waiting".to_string()));
+        assert_eq!(detect_status("approve this action"), Some("waiting".to_string()));
+    }
+
+    #[test]
+    fn detect_status_thinking() {
+        assert_eq!(detect_status("Thinking..."), Some("thinking".to_string()));
+        assert_eq!(detect_status("ctrl+c to interrupt"), Some("thinking".to_string()));
+    }
+
+    #[test]
+    fn detect_status_error() {
+        assert_eq!(detect_status("error: file not found"), Some("error".to_string()));
+        assert_eq!(detect_status("rate limit exceeded"), Some("error".to_string()));
+    }
+
+    #[test]
+    fn detect_status_running() {
+        assert_eq!(detect_status("⠋ Processing files"), Some("running".to_string()));
+        assert_eq!(detect_status("⏺ Read src/main.rs"), Some("running".to_string()));
+    }
+
+    #[test]
+    fn detect_status_idle() {
+        assert_eq!(detect_status("❯ "), Some("idle".to_string()));
+        assert_eq!(detect_status("$ "), Some("idle".to_string()));
+    }
+
+    #[test]
+    fn detect_status_none() {
+        assert_eq!(detect_status("some regular output text"), None);
+    }
+
+    #[test]
+    fn claude_parser_emits_status() {
+        let mut parser = ClaudeMetricParser::new();
+        let update = parser.parse_chunk("Thinking about your question...");
+        assert!(update.is_some());
+        assert_eq!(update.unwrap().status, Some("thinking".to_string()));
+    }
+
+    #[test]
+    fn claude_parser_detects_model_and_cost() {
+        let mut parser = ClaudeMetricParser::new();
+        let update = parser.parse_chunk("Using opus-4 model, cost so far $1.23");
+        assert!(update.is_some());
+        let u = update.unwrap();
+        assert_eq!(u.model, Some("opus-4".to_string()));
+        assert_eq!(u.cost, Some(1.23));
+    }
+
+    #[test]
+    fn codex_parser_emits_status() {
+        let mut parser = CodexMetricParser::new();
+        let update = parser.parse_chunk("⠙ reading files...");
+        assert!(update.is_some());
+        let u = update.unwrap();
+        assert_eq!(u.status, Some("running".to_string()));
+    }
+
+    #[test]
+    fn gemini_parser_emits_status() {
+        let mut parser = GeminiMetricParser::new();
+        let update = parser.parse_chunk("error: something went wrong");
+        assert!(update.is_some());
+        assert_eq!(update.unwrap().status, Some("error".to_string()));
     }
 }

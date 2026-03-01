@@ -160,6 +160,31 @@ pub async fn detect_providers() -> Result<Vec<DetectedProvider>, String> {
     Ok(detect_provider_paths())
 }
 
+#[tauri::command]
+pub async fn fetch_provider_usage(
+    provider: String,
+) -> Result<Option<crate::usage::ProviderUsage>, String> {
+    let credential = match crate::usage::discover_credential(&provider) {
+        Some(c) => c,
+        None => {
+            // No credentials found — return marker so frontend can show "API key needed"
+            return Ok(Some(crate::usage::ProviderUsage {
+                rate_limit: None,
+                billing: None,
+                plan: None,
+                has_credentials: false,
+            }));
+        }
+    };
+
+    match provider.as_str() {
+        "claude-code" => crate::usage::fetch_claude_usage(&credential).await.map(Some),
+        "codex-cli" => crate::usage::fetch_openai_usage(&credential).await.map(Some),
+        "gemini-cli" => crate::usage::fetch_gemini_usage(&credential).await.map(Some),
+        _ => Ok(None),
+    }
+}
+
 fn spawn_reader_task(
     app: AppHandle,
     session: Arc<PtySession>,
@@ -221,7 +246,19 @@ fn spawn_reader_task(
                         // Parse metrics from the chunk
                         if let Some(metric_update) = parser.parse_chunk(&chunk) {
                             let metrics_event = format!("metrics-{}", session.id);
-                            let _ = app.emit(metrics_event.as_str(), metric_update);
+                            let _ = app.emit(metrics_event.as_str(), &metric_update);
+
+                            // Forward detected status to session-status event
+                            if let Some(ref status_str) = metric_update.status {
+                                let session_status = match status_str.as_str() {
+                                    "thinking" => SessionStatus::Thinking,
+                                    "waiting" => SessionStatus::Waiting,
+                                    "idle" => SessionStatus::Idle,
+                                    "error" => SessionStatus::Error,
+                                    _ => SessionStatus::Running,
+                                };
+                                let _ = emit_status(&app, &session.id, session_status);
+                            }
                         }
                     }
                 }
