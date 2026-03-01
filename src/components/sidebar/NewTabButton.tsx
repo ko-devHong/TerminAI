@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { PROVIDERS } from "@/lib/providers";
-import { type AIProvider } from "@/types";
+import type { AIProvider } from "@/types";
 
 const NEW_TAB_PROVIDERS: AIProvider[] = ["claude-code", "codex-cli", "gemini-cli"];
 

@@ -7,21 +7,15 @@ import {
   INITIAL_SPACES,
   INITIAL_TABS,
 } from "@/lib/constants";
-import { type AIProvider, type Space, type Tab } from "@/types";
+import type { AIProvider, Space, Tab } from "@/types";
 
 export const spacesAtom = atomWithStorage<Space[]>("terminai:spaces", []);
 
 export const tabAtom = atomFamily((_id: string) => atom<Tab | null>(null));
 
-export const focusedTabIdAtom = atomWithStorage<string | null>(
-  "terminai:focused-tab-id",
-  null,
-);
+export const focusedTabIdAtom = atomWithStorage<string | null>("terminai:focused-tab-id", null);
 
-export const favoriteTabIdsAtom = atomWithStorage<string[]>(
-  "terminai:favorite-tab-ids",
-  [],
-);
+export const favoriteTabIdsAtom = atomWithStorage<string[]>("terminai:favorite-tab-ids", []);
 
 export const focusedTabAtom = atom((get) => {
   const focusedTabId = get(focusedTabIdAtom);
@@ -42,20 +36,15 @@ export const initializeWorkspaceAtom = atom(null, (get, set) => {
   }
 });
 
-export const toggleSpaceCollapsedAtom = atom(
-  null,
-  (get, set, spaceId: string) => {
-    const spaces = get(spacesAtom);
-    set(
-      spacesAtom,
-      spaces.map((space) =>
-        space.id === spaceId
-          ? { ...space, isCollapsed: !space.isCollapsed }
-          : space,
-      ),
-    );
-  },
-);
+export const toggleSpaceCollapsedAtom = atom(null, (get, set, spaceId: string) => {
+  const spaces = get(spacesAtom);
+  set(
+    spacesAtom,
+    spaces.map((space) =>
+      space.id === spaceId ? { ...space, isCollapsed: !space.isCollapsed } : space,
+    ),
+  );
+});
 
 export const focusTabAtom = atom(null, (get, set, tabId: string) => {
   const spaces = get(spacesAtom);

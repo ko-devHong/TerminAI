@@ -1,6 +1,5 @@
-import { useEffect } from "react";
-
 import { useAtomValue, useSetAtom } from "jotai";
+import { useEffect } from "react";
 
 import { sidebarWidthAtom } from "@/atoms/settings";
 import { focusedTabIdAtom, initializeWorkspaceAtom } from "@/atoms/spaces";

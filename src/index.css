@@ -2,20 +2,20 @@
 
 @theme {
   /* Arc-inspired Dark Theme */
-  --color-background: #09090B;
-  --color-sidebar: #18181B;
-  --color-sidebar-hover: #27272A;
-  --color-surface: #18181B;
-  --color-border: #27272A;
+  --color-background: #09090b;
+  --color-sidebar: #18181b;
+  --color-sidebar-hover: #27272a;
+  --color-surface: #18181b;
+  --color-border: #27272a;
 
-  --color-text-primary: #FAFAFA;
-  --color-text-secondary: #A1A1AA;
-  --color-text-muted: #71717A;
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
 
-  --color-status-running: #10B981;
-  --color-status-processing: #F59E0B;
-  --color-status-error: #EF4444;
-  --color-status-idle: #71717A;
+  --color-status-running: #10b981;
+  --color-status-processing: #f59e0b;
+  --color-status-error: #ef4444;
+  --color-status-idle: #71717a;
 
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", monospace;
@@ -40,11 +40,18 @@ body {
 
 /* Status icon animations — CSS only (GPU accelerated, no JS overhead) */
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .status-running {

@@ -1,11 +1,6 @@
 export type AIProvider = "claude-code" | "codex-cli" | "gemini-cli" | "custom";
 
-export type ProcessStatus =
-  | "idle"
-  | "running"
-  | "processing"
-  | "error"
-  | "disconnected";
+export type ProcessStatus = "idle" | "running" | "processing" | "error" | "disconnected";
 
 export interface ProviderConfig {
   id: AIProvider;

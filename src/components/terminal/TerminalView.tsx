@@ -1,9 +1,8 @@
-import { useEffect, useRef } from "react";
-
-import { useAtomValue } from "jotai";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
+import { useAtomValue } from "jotai";
+import { useEffect, useRef } from "react";
 
 import { tabAtom } from "@/atoms/spaces";
 

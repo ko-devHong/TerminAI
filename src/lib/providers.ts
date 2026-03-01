@@ -1,4 +1,4 @@
-import { type AIProvider, type ProviderConfig } from "@/types";
+import type { AIProvider, ProviderConfig } from "@/types";
 
 export const PROVIDERS: Record<AIProvider, ProviderConfig> = {
   "claude-code": {

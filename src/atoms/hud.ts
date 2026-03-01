@@ -2,16 +2,14 @@ import { atom } from "jotai";
 import { atomFamily, atomWithStorage } from "jotai/utils";
 
 import { focusedTabAtom } from "@/atoms/spaces";
-import { type HUDMetrics } from "@/types";
+import type { HUDMetrics } from "@/types";
 
 export const hudExpandModeAtom = atomWithStorage<"compact" | "expanded" | "hidden">(
   "terminai:hud-mode",
   "compact",
 );
 
-export const hudMetricsAtom = atomFamily((_sessionId: string) =>
-  atom<HUDMetrics | null>(null),
-);
+export const hudMetricsAtom = atomFamily((_sessionId: string) => atom<HUDMetrics | null>(null));
 
 export const activeHudMetricsAtom = atom((get): HUDMetrics | null => {
   const focusedTab = get(focusedTabAtom);

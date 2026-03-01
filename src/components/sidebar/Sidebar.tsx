@@ -1,7 +1,6 @@
-import { useMemo } from "react";
-
 import { useAtomValue, useSetAtom } from "jotai";
 import { Search } from "lucide-react";
+import { useMemo } from "react";
 
 import { sidebarCollapsedAtom, sidebarWidthAtom } from "@/atoms/settings";
 import { spacesAtom } from "@/atoms/spaces";
@@ -33,7 +32,9 @@ export function Sidebar() {
 
     function onMove(event: MouseEvent) {
       const delta = event.clientX - initialX;
-      setSidebarWidth(Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, initialWidth + delta)));
+      setSidebarWidth(
+        Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, initialWidth + delta)),
+      );
     }
 
     function onUp() {
@@ -76,8 +77,9 @@ export function Sidebar() {
         <NewTabButton />
       </div>
 
-      <div
-        role="presentation"
+      <button
+        type="button"
+        aria-label="Resize sidebar"
         className="absolute top-0 right-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-zinc-700/60"
         onMouseDown={(event) => startResize(event.clientX)}
       />

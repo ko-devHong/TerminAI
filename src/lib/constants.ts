@@ -1,4 +1,4 @@
-import { type Space, type Tab } from "@/types";
+import type { Space, Tab } from "@/types";
 
 export const INITIAL_SPACES: Space[] = [
   {
