@@ -6,13 +6,38 @@ import { useCallback, useEffect, useRef } from "react";
 
 import { tabAtom } from "@/atoms/spaces";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
-import { invokeTauri } from "@/lib/tauri";
-import type { ProcessStatus } from "@/types";
+import { invokeTauri, isTauriRuntimeAvailable } from "@/lib/tauri";
+import type { AIProvider, ProcessStatus } from "@/types";
 
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalViewProps {
   tabId: string | null;
+}
+
+const GEMINI_SPINNER_LINE_PATTERN = /^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+.*\(esc to cancel,\s*\d+s\).*$/u;
+const GEMINI_SHORTCUT_HINT_PATTERN = /^\s*\?\s*for shortcuts\s*$/iu;
+
+function sanitizeTerminalOutput(payload: string, provider: AIProvider): string {
+  if (provider !== "gemini-cli") {
+    return payload;
+  }
+
+  const lines = payload.split("\n");
+  const keptLines: string[] = [];
+
+  for (const line of lines) {
+    const normalized = line.trim();
+    if (GEMINI_SPINNER_LINE_PATTERN.test(normalized)) {
+      continue;
+    }
+    if (GEMINI_SHORTCUT_HINT_PATTERN.test(normalized)) {
+      continue;
+    }
+    keptLines.push(line);
+  }
+
+  return keptLines.join("\n");
 }
 
 export function TerminalView({ tabId }: TerminalViewProps) {
@@ -130,14 +155,26 @@ export function TerminalView({ tabId }: TerminalViewProps) {
     const existingSessionId = activeTab.sessionId;
 
     async function ensureSession(): Promise<void> {
-      term.clear();
+      if (!isTauriRuntimeAvailable()) {
+        term.clear();
+        term.writeln(`[${activeTab.provider}] Tauri runtime unavailable in web mode.`);
+        term.writeln("Run `bun run tauri dev` to spawn real PTY sessions.");
+        currentSessionIdRef.current = null;
+        return;
+      }
 
       if (existingSessionId) {
+        if (currentSessionIdRef.current === existingSessionId) {
+          return;
+        }
+
+        term.clear();
         currentSessionIdRef.current = existingSessionId;
         term.writeln(`[${activeTab.provider}] attached to session ${existingSessionId}`);
         return;
       }
 
+      term.clear();
       term.writeln(`[${activeTab.provider}] spawning session...`);
 
       try {
@@ -170,10 +207,6 @@ export function TerminalView({ tabId }: TerminalViewProps) {
 
   const handleOutput = useCallback(
     (payload: string) => {
-      if (terminalRef.current) {
-        terminalRef.current.write(payload);
-      }
-
       if (!tabId) {
         return;
       }
@@ -181,6 +214,11 @@ export function TerminalView({ tabId }: TerminalViewProps) {
       const currentTab = store.get(tabAtom(tabId));
       if (!currentTab) {
         return;
+      }
+
+      const sanitizedPayload = sanitizeTerminalOutput(payload, currentTab.provider);
+      if (terminalRef.current && sanitizedPayload.length > 0) {
+        terminalRef.current.write(sanitizedPayload);
       }
 
       store.set(tabAtom(tabId), {

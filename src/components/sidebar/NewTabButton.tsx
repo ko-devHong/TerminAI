@@ -61,7 +61,7 @@ export function NewTabButton() {
               key={provider}
               disabled={isDisabled}
               className="cursor-pointer data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
-              onClick={() => handleCreateTab(provider)}
+              onSelect={() => handleCreateTab(provider)}
             >
               {PROVIDERS[provider].label}
               {!isInstalled ? " (미설치)" : ""}
