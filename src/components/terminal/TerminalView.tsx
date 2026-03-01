@@ -200,6 +200,11 @@ export function TerminalView({ tabId }: TerminalViewProps) {
           cols: cached.terminal.cols,
           rows: cached.terminal.rows,
         });
+
+        // Setup Claude Code statusline JSON file if applicable
+        if (activeTab.provider === "claude-code") {
+          invokeTauri("setup_claude_statusline").catch(() => {});
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         cached.terminal.writeln(`Failed to spawn session: ${message}`);
@@ -283,6 +288,12 @@ export function TerminalView({ tabId }: TerminalViewProps) {
         sessionDuration: existing?.sessionDuration ?? 0,
         detailedStatus: (update.status as ProcessStatus) ?? existing?.detailedStatus ?? "idle",
         connectionStatus: "connected",
+        rateLimitCountdown:
+          update.rateLimitSeconds != null
+            ? update.rateLimitSeconds
+            : (existing?.rateLimitCountdown ?? null),
+        rateLimitDetectedAt:
+          update.rateLimitSeconds != null ? Date.now() : (existing?.rateLimitDetectedAt ?? null),
       };
       store.set(hudMetricsAtom(sessionId), merged);
     },
@@ -330,6 +341,8 @@ export function TerminalView({ tabId }: TerminalViewProps) {
         sessionDuration: existing?.sessionDuration ?? 0,
         detailedStatus: screenData.detectedStatus ?? existing?.detailedStatus ?? "idle",
         connectionStatus: "connected",
+        rateLimitCountdown: existing?.rateLimitCountdown ?? null,
+        rateLimitDetectedAt: existing?.rateLimitDetectedAt ?? null,
       };
 
       store.set(hudMetricsAtom(sessionId), merged);

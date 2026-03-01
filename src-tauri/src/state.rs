@@ -13,6 +13,8 @@ pub enum SessionStatus {
     Waiting,
     Error,
     Disconnected,
+    #[allow(dead_code)]
+    Stale,
 }
 
 pub struct PtySession {
@@ -21,6 +23,7 @@ pub struct PtySession {
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     pub status: Arc<Mutex<SessionStatus>>,
+    pub statusline_abort: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
 }
 
 #[derive(Clone)]

@@ -1,6 +1,6 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { useAtomValue, useSetAtom } from "jotai";
-import { AlertCircle, Copy, FolderCog, Loader2, Trash2, X } from "lucide-react";
+import { AlertCircle, Clock3, Copy, FolderCog, Loader2, Trash2, X } from "lucide-react";
 
 import {
   closeTabAtom,
@@ -63,6 +63,14 @@ function StatusOverlay({ status }: { status: string }) {
     return (
       <span className="absolute -right-0.5 -bottom-0.5">
         <Loader2 className="size-2 animate-spin text-amber-500" />
+      </span>
+    );
+  }
+
+  if (status === "stale") {
+    return (
+      <span className="absolute -right-0.5 -bottom-0.5">
+        <Clock3 className="size-2 text-orange-500" />
       </span>
     );
   }

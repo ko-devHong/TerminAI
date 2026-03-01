@@ -34,6 +34,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useStaleDetection } from "@/hooks/useStaleDetection";
 import { invokeTauri, isTauriRuntimeAvailable } from "@/lib/tauri";
 
 const LazyTerminalView = lazy(async () => ({
@@ -66,6 +67,8 @@ function App() {
   const [isDefaultPathOpen, setIsDefaultPathOpen] = useState(false);
   const [defaultPathDraft, setDefaultPathDraft] = useState(defaultCwd);
   const [tabPathDraft, setTabPathDraft] = useState("");
+
+  useStaleDetection();
 
   useEffect(() => {
     initializeWorkspace();

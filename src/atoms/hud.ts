@@ -67,5 +67,7 @@ export const activeHudMetricsAtom = atom((get): HUDMetrics | null => {
         : status === "running" || status === "thinking"
           ? "connected"
           : "disconnected",
+    rateLimitCountdown: null,
+    rateLimitDetectedAt: null,
   };
 });

@@ -1,5 +1,5 @@
 import { useAtomValue, useSetAtom } from "jotai";
-import { Clock3, DollarSign, KeyRound } from "lucide-react";
+import { AlertTriangle, Clock3, DollarSign, KeyRound } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -146,12 +146,18 @@ export function HUDPanel() {
           </span>
           <span className="text-zinc-400">{contextPercent}%</span>
         </span>
+        <ContextWarning percent={contextPercent} />
 
         <span className="text-zinc-600">|</span>
 
         {/* Status */}
         <StatusDot status={currentStatus} />
         <span className="text-zinc-400">{currentStatus}</span>
+        <RateLimitBadge
+          countdown={metrics?.rateLimitCountdown ?? null}
+          detectedAt={metrics?.rateLimitDetectedAt ?? null}
+          now={now}
+        />
 
         {/* Right side: cost + duration */}
         <span className="ml-auto inline-flex items-center gap-3 text-zinc-400">
@@ -178,11 +184,14 @@ export function HUDPanel() {
           >
             {/* Context bar (expanded) */}
             {metrics?.contextWindow ? (
-              <ProgressRow
-                label="Context"
-                percent={contextPercent}
-                tooltip={`${metrics.contextWindow.used.toLocaleString()} / ${metrics.contextWindow.total.toLocaleString()} tokens`}
-              />
+              <>
+                <ProgressRow
+                  label="Context"
+                  percent={contextPercent}
+                  tooltip={`${metrics.contextWindow.used.toLocaleString()} / ${metrics.contextWindow.total.toLocaleString()} tokens`}
+                />
+                <ContextWarning percent={contextPercent} />
+              </>
             ) : null}
 
             {/* Rate limit bars */}
@@ -204,12 +213,25 @@ export function HUDPanel() {
                 />
               </>
             ) : null}
+            <RateLimitBadge
+              countdown={metrics?.rateLimitCountdown ?? null}
+              detectedAt={metrics?.rateLimitDetectedAt ?? null}
+              now={now}
+            />
 
             {/* API key needed indicator */}
             {metrics && !metrics.hasCredentials ? (
               <div className="flex items-center gap-1.5 text-xs text-zinc-500">
                 <KeyRound className="size-3" />
                 <span>API key needed for rate limits</span>
+              </div>
+            ) : null}
+
+            {/* Stale warning */}
+            {currentStatus === "stale" ? (
+              <div className="flex items-center gap-1.5 text-xs text-orange-400">
+                <Clock3 className="size-3" />
+                <span>No output for 3+ minutes</span>
               </div>
             ) : null}
 
@@ -265,6 +287,50 @@ function ProgressRow({
   );
 }
 
+function RateLimitBadge({
+  countdown,
+  detectedAt,
+  now,
+}: {
+  countdown: number | null;
+  detectedAt: number | null;
+  now: number;
+}) {
+  if (countdown == null || detectedAt == null) return null;
+
+  const elapsed = Math.floor((now - detectedAt) / 1000);
+  const remaining = countdown - elapsed;
+
+  if (remaining <= 0) return null;
+
+  return (
+    <span className="inline-flex animate-pulse items-center gap-0.5 rounded bg-red-500/20 px-1 py-0.5 text-[10px] font-medium text-red-400">
+      <Clock3 className="size-2.5" />
+      Rate limited {remaining}s
+    </span>
+  );
+}
+
+function ContextWarning({ percent }: { percent: number }) {
+  if (percent < 85) return null;
+
+  if (percent >= 95) {
+    return (
+      <span className="inline-flex animate-pulse items-center gap-0.5 rounded bg-red-500/20 px-1 py-0.5 text-[10px] font-medium text-red-400">
+        <AlertTriangle className="size-2.5" />
+        Critical
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-0.5 rounded bg-orange-500/20 px-1 py-0.5 text-[10px] font-medium text-orange-400">
+      <AlertTriangle className="size-2.5" />
+      Low ctx
+    </span>
+  );
+}
+
 function StatusDot({ status }: { status: ProcessStatus }) {
   const color =
     status === "running"
@@ -273,11 +339,13 @@ function StatusDot({ status }: { status: ProcessStatus }) {
         ? "bg-amber-500"
         : status === "waiting"
           ? "bg-blue-500"
-          : status === "error" || status === "disconnected"
-            ? "bg-red-500"
-            : "bg-zinc-500";
+          : status === "stale"
+            ? "bg-orange-500"
+            : status === "error" || status === "disconnected"
+              ? "bg-red-500"
+              : "bg-zinc-500";
 
-  const shouldPulse = status === "thinking" || status === "waiting";
+  const shouldPulse = status === "thinking" || status === "waiting" || status === "stale";
 
   return (
     <motion.span

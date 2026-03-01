@@ -1,6 +1,13 @@
 export type AIProvider = "claude-code" | "codex-cli" | "gemini-cli" | "custom";
 
-export type ProcessStatus = "idle" | "running" | "thinking" | "waiting" | "error" | "disconnected";
+export type ProcessStatus =
+  | "idle"
+  | "running"
+  | "thinking"
+  | "waiting"
+  | "error"
+  | "disconnected"
+  | "stale";
 
 export interface ProviderConfig {
   id: AIProvider;
@@ -71,6 +78,8 @@ export interface HUDMetrics {
   sessionDuration: number;
   detailedStatus: ProcessStatus;
   connectionStatus: "connected" | "disconnected" | "error";
+  rateLimitCountdown: number | null;
+  rateLimitDetectedAt: number | null;
 }
 
 export interface MetricUpdate {
@@ -82,4 +91,5 @@ export interface MetricUpdate {
   contextUsed: number | null;
   contextTotal: number | null;
   status: string | null;
+  rateLimitSeconds: number | null;
 }

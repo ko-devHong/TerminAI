@@ -3,7 +3,9 @@ use crate::provider::{
     build_provider_command, detect_providers as detect_provider_paths, DetectedProvider,
 };
 use crate::state::{AppState, PtySession, SessionStatus};
+use crate::statusline::StatuslineWatcher;
 use portable_pty::{native_pty_system, PtySize};
+use serde::Serialize;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -30,11 +32,22 @@ pub async fn spawn_session(
         })
         .map_err(|error| format!("failed to open pty: {error}"))?;
 
+    let session_id = Uuid::new_v4().to_string();
+
     let mut command = build_provider_command(&provider, &cwd)?;
     command.env("TERM", "xterm-256color");
     command.env("COLUMNS", pty_cols.to_string());
     command.env("LINES", pty_rows.to_string());
     command.env("COLORTERM", "truecolor");
+
+    // Set statusline file path for claude-code sessions
+    let statusline_watcher = if provider == "claude-code" {
+        let watcher = StatuslineWatcher::new(&session_id);
+        command.env("TERMINAI_SL_PATH", watcher.sl_file_path());
+        Some(watcher)
+    } else {
+        None
+    };
 
     let child = pair
         .slave
@@ -50,14 +63,13 @@ pub async fn spawn_session(
         .take_writer()
         .map_err(|error| format!("failed to take pty writer: {error}"))?;
 
-    let session_id = Uuid::new_v4().to_string();
-
     let session = Arc::new(PtySession {
         id: session_id.clone(),
         master: Arc::new(tokio::sync::Mutex::new(pair.master)),
         writer: Arc::new(tokio::sync::Mutex::new(writer)),
         child: Arc::new(tokio::sync::Mutex::new(child)),
         status: Arc::new(tokio::sync::Mutex::new(SessionStatus::Running)),
+        statusline_abort: Arc::new(tokio::sync::Mutex::new(None)),
     });
 
     state
@@ -69,7 +81,12 @@ pub async fn spawn_session(
     emit_status(&app, &session_id, SessionStatus::Running)?;
 
     let parser = create_parser(&provider);
-    spawn_reader_task(app, Arc::clone(&session), reader, parser);
+    spawn_reader_task(app.clone(), Arc::clone(&session), reader, parser);
+
+    // Spawn statusline poller for claude-code sessions
+    if let Some(watcher) = statusline_watcher {
+        spawn_statusline_poller(app, Arc::clone(&session), watcher);
+    }
 
     Ok(session_id)
 }
@@ -140,6 +157,14 @@ pub async fn kill_session(
             .ok_or_else(|| format!("session not found: {session_id}"))?
     };
 
+    // Abort statusline poller if running
+    {
+        let mut abort = session.statusline_abort.lock().await;
+        if let Some(handle) = abort.take() {
+            handle.abort();
+        }
+    }
+
     {
         let mut child = session.child.lock().await;
         child
@@ -183,6 +208,88 @@ pub async fn fetch_provider_usage(
         "gemini-cli" => crate::usage::fetch_gemini_usage(&credential).await.map(Some),
         _ => Ok(None),
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatuslineSetupResult {
+    configured: bool,
+    already_configured: bool,
+}
+
+#[tauri::command]
+pub async fn setup_claude_statusline() -> Result<StatuslineSetupResult, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "cannot determine home directory".to_string())?;
+
+    let settings_path = std::path::PathBuf::from(&home).join(".claude").join("settings.json");
+
+    // Read existing settings or start fresh
+    let mut settings: serde_json::Value = if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)
+            .map_err(|e| format!("failed to read settings: {e}"))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("failed to parse settings: {e}"))?
+    } else {
+        serde_json::json!({})
+    };
+
+    // Check if statusLine is already configured
+    if settings.get("statusLine").is_some() {
+        return Ok(StatuslineSetupResult {
+            configured: false,
+            already_configured: true,
+        });
+    }
+
+    // Add our statusline command
+    settings["statusLine"] = serde_json::json!({
+        "type": "command",
+        "command": "sh -c 'cat > \"$TERMINAI_SL_PATH\" 2>/dev/null || true'"
+    });
+
+    // Ensure .claude directory exists
+    if let Some(parent) = settings_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let formatted = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("failed to serialize settings: {e}"))?;
+    std::fs::write(&settings_path, formatted)
+        .map_err(|e| format!("failed to write settings: {e}"))?;
+
+    Ok(StatuslineSetupResult {
+        configured: true,
+        already_configured: false,
+    })
+}
+
+fn spawn_statusline_poller(
+    app: AppHandle,
+    session: Arc<PtySession>,
+    mut watcher: StatuslineWatcher,
+) {
+    let session_id = session.id.clone();
+
+    let handle = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+            if let Some(update) = watcher.poll() {
+                let metrics_event = format!("metrics-{}", session_id);
+                let _ = app.emit(metrics_event.as_str(), &update);
+            }
+        }
+    });
+
+    // Store abort handle so we can clean up on session kill
+    let abort_handle = handle.abort_handle();
+    let abort_store = session.statusline_abort.clone();
+    tokio::spawn(async move {
+        let mut guard = abort_store.lock().await;
+        *guard = Some(abort_handle);
+    });
 }
 
 fn spawn_reader_task(

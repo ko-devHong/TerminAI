@@ -13,6 +13,7 @@ pub struct MetricUpdate {
     pub context_used: Option<u64>,
     pub context_total: Option<u64>,
     pub status: Option<String>,
+    pub rate_limit_seconds: Option<u64>,
 }
 
 impl MetricUpdate {
@@ -26,6 +27,7 @@ impl MetricUpdate {
             context_used: None,
             context_total: None,
             status: None,
+            rate_limit_seconds: None,
         }
     }
 }
@@ -79,6 +81,32 @@ fn detect_status(clean: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+// ─── Rate Limit Detection ────────────────────────────────────
+
+static RATE_LIMIT_RETRY_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)retry\s+after\s+(\d+)\s+seconds").unwrap());
+
+static RATE_LIMIT_TRY_AGAIN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)try\s+again\s+in\s+(\d+)\s+(seconds?|minutes?)").unwrap());
+
+static RATE_LIMIT_429_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(429|too many requests|rate.?limit)").unwrap());
+
+fn detect_rate_limit_seconds(clean: &str) -> Option<u64> {
+    if let Some(cap) = RATE_LIMIT_RETRY_RE.captures(clean) {
+        return cap[1].parse().ok();
+    }
+    if let Some(cap) = RATE_LIMIT_TRY_AGAIN_RE.captures(clean) {
+        let value: u64 = cap[1].parse().ok()?;
+        let unit = &cap[2];
+        return Some(if unit.starts_with('m') { value * 60 } else { value });
+    }
+    if RATE_LIMIT_429_RE.is_match(clean) {
+        return Some(60); // default 60s if no specific time
+    }
+    None
 }
 
 // ─── Claude Code Parser ────────────────────────────────────
@@ -223,6 +251,11 @@ impl MetricParser for ClaudeMetricParser {
             changed = true;
         }
 
+        let rate_limit = detect_rate_limit_seconds(&clean);
+        if rate_limit.is_some() {
+            changed = true;
+        }
+
         if changed {
             update.active_tools.clone_from(&self.active_tools);
             update.model.clone_from(&self.last_model);
@@ -232,6 +265,7 @@ impl MetricParser for ClaudeMetricParser {
             update.context_used = self.context_used;
             update.context_total = self.context_total;
             update.status = detected_status;
+            update.rate_limit_seconds = rate_limit;
             Some(update)
         } else {
             None
@@ -293,10 +327,16 @@ impl MetricParser for CodexMetricParser {
             changed = true;
         }
 
+        let rate_limit = detect_rate_limit_seconds(&clean);
+        if rate_limit.is_some() {
+            changed = true;
+        }
+
         if changed {
             update.active_tools.clone_from(&self.active_tools);
             update.cost = Some(self.cumulative_cost);
             update.status = detected_status;
+            update.rate_limit_seconds = rate_limit;
             Some(update)
         } else {
             None
@@ -344,9 +384,15 @@ impl MetricParser for GeminiMetricParser {
             changed = true;
         }
 
+        let rate_limit = detect_rate_limit_seconds(&clean);
+        if rate_limit.is_some() {
+            changed = true;
+        }
+
         if changed {
             update.active_tools.clone_from(&self.active_tools);
             update.status = detected_status;
+            update.rate_limit_seconds = rate_limit;
             Some(update)
         } else {
             None
@@ -436,5 +482,34 @@ mod tests {
         let update = parser.parse_chunk("error: something went wrong");
         assert!(update.is_some());
         assert_eq!(update.unwrap().status, Some("error".to_string()));
+    }
+
+    #[test]
+    fn detect_rate_limit_retry_after() {
+        assert_eq!(detect_rate_limit_seconds("Please retry after 30 seconds"), Some(30));
+    }
+
+    #[test]
+    fn detect_rate_limit_try_again_minutes() {
+        assert_eq!(detect_rate_limit_seconds("Try again in 2 minutes"), Some(120));
+    }
+
+    #[test]
+    fn detect_rate_limit_429() {
+        assert_eq!(detect_rate_limit_seconds("HTTP 429 Too Many Requests"), Some(60));
+    }
+
+    #[test]
+    fn detect_rate_limit_none() {
+        assert_eq!(detect_rate_limit_seconds("normal output text"), None);
+    }
+
+    #[test]
+    fn claude_parser_detects_rate_limit() {
+        let mut parser = ClaudeMetricParser::new();
+        let update = parser.parse_chunk("Rate limit exceeded, retry after 45 seconds");
+        assert!(update.is_some());
+        let u = update.unwrap();
+        assert_eq!(u.rate_limit_seconds, Some(45));
     }
 }
