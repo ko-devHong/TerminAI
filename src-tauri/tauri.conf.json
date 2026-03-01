@@ -4,13 +4,12 @@
   "version": "0.1.0",
   "identifier": "com.taehonglee.terminai",
   "build": {
-    "beforeDevCommand": "dx serve --port 1420",
+    "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "dx bundle --release",
-    "frontendDist": "../dist/public"
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
   },
   "app": {
-    "withGlobalTauri": true,
     "windows": [
       {
         "title": "terminai",
