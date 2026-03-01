@@ -1,9 +1,12 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { Clock3, Cpu, DollarSign } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import { activeHudMetricsAtom, hudExpandModeAtom } from "@/atoms/hud";
 import { focusedTabAtom } from "@/atoms/spaces";
+import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { cn } from "@/lib/utils";
+import type { ProcessStatus } from "@/types";
 
 function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -21,6 +24,35 @@ export function HUDPanel() {
   const setMode = useSetAtom(hudExpandModeAtom);
   const activeTab = useAtomValue(focusedTabAtom);
   const metrics = useAtomValue(activeHudMetricsAtom);
+  const [liveStatus, setLiveStatus] = useState<ProcessStatus | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const connectionStatusLabel = useMemo(() => {
+    const status = liveStatus ?? activeTab?.processStatus;
+    if (!status) return "idle";
+    return status;
+  }, [activeTab?.processStatus, liveStatus]);
+
+  useEffect(() => {
+    setLiveStatus(activeTab?.processStatus ?? null);
+  }, [activeTab?.processStatus]);
+
+  useTauriEvent<ProcessStatus>(
+    activeTab?.sessionId ? `session-status-${activeTab.sessionId}` : null,
+    (status) => setLiveStatus(status),
+  );
+
+  const elapsedSeconds = useMemo(() => {
+    if (!activeTab) {
+      return 0;
+    }
+    return Math.max(0, Math.floor((now - activeTab.createdAt) / 1000));
+  }, [activeTab, now]);
 
   function cycleMode() {
     const nextMode = mode === "compact" ? "expanded" : mode === "expanded" ? "hidden" : "compact";
@@ -53,7 +85,7 @@ export function HUDPanel() {
         <span className="text-zinc-500">|</span>
         <span>{metrics?.model ?? "-"}</span>
         <span className="text-zinc-500">|</span>
-        <span>Context 78%</span>
+        <span>상태: {connectionStatusLabel}</span>
         <span className="text-zinc-500">|</span>
         <span className="inline-flex items-center gap-1">
           <DollarSign className="size-3" />
@@ -61,7 +93,7 @@ export function HUDPanel() {
         </span>
         <span className="inline-flex items-center gap-1">
           <Clock3 className="size-3" />
-          {metrics ? formatDuration(metrics.sessionDuration) : "0m"}
+          {formatDuration(elapsedSeconds)}
         </span>
       </div>
 
@@ -77,6 +109,7 @@ export function HUDPanel() {
           <span>
             Rate: {metrics?.rateLimit?.remaining ?? 0}/{metrics?.rateLimit?.total ?? 0}
           </span>
+          <span>Session: {activeTab?.sessionId ?? "-"}</span>
         </div>
       ) : null}
     </button>

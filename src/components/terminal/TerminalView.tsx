@@ -168,11 +168,29 @@ export function TerminalView({ tabId }: TerminalViewProps) {
 
   const sessionId = tab?.sessionId ?? null;
 
-  const handleOutput = useCallback((payload: string) => {
-    if (terminalRef.current) {
-      terminalRef.current.write(payload);
-    }
-  }, []);
+  const handleOutput = useCallback(
+    (payload: string) => {
+      if (terminalRef.current) {
+        terminalRef.current.write(payload);
+      }
+
+      if (!tabId) {
+        return;
+      }
+
+      const currentTab = store.get(tabAtom(tabId));
+      if (!currentTab) {
+        return;
+      }
+
+      store.set(tabAtom(tabId), {
+        ...currentTab,
+        processStatus: "running",
+        lastActivityAt: Date.now(),
+      });
+    },
+    [store, tabId],
+  );
 
   const handleStatus = useCallback(
     (status: ProcessStatus) => {
