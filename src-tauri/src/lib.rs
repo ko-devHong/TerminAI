@@ -1,4 +1,5 @@
 mod commands;
+mod metrics;
 mod provider;
 mod state;
 

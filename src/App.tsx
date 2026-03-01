@@ -1,7 +1,13 @@
 import { useAtomValue, useSetAtom } from "jotai";
+import { AnimatePresence, motion } from "motion/react";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
-import { defaultCwdAtom, sidebarCollapsedAtom, sidebarWidthAtom } from "@/atoms/settings";
+import {
+  defaultCwdAtom,
+  sidebarCollapsedAtom,
+  sidebarWidthAtom,
+  themeAtom,
+} from "@/atoms/settings";
 import {
   allTabsAtom,
   closeCwdEditorAtom,
@@ -48,6 +54,7 @@ function App() {
   const cwdEditor = useAtomValue(cwdEditorAtom);
   const editingTab = useAtomValue(tabAtom(cwdEditor.tabId ?? "__none__"));
   const defaultCwd = useAtomValue(defaultCwdAtom);
+  const theme = useAtomValue(themeAtom);
   const setSidebarCollapsed = useSetAtom(sidebarCollapsedAtom);
   const setDefaultCwd = useSetAtom(defaultCwdAtom);
   const createTab = useSetAtom(createTabAtom);
@@ -68,6 +75,10 @@ function App() {
     const width = Math.min(360, Math.max(180, sidebarWidth));
     document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("light", theme === "light");
+  }, [theme]);
 
   useEffect(() => {
     setDefaultPathDraft(defaultCwd);
@@ -205,7 +216,10 @@ function App() {
   ]);
 
   return (
-    <main className="flex h-screen w-screen bg-zinc-950 text-zinc-50">
+    <main
+      className="flex h-screen w-screen"
+      style={{ background: "var(--color-background)", color: "var(--color-text-primary)" }}
+    >
       <Sidebar
         onOpenCommandPalette={() => setIsCommandOpen(true)}
         onOpenDefaultPathDialog={() => setIsDefaultPathOpen(true)}
@@ -213,10 +227,21 @@ function App() {
       />
 
       <section className="flex min-w-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 border-b border-zinc-800">
-          <Suspense fallback={<div className="h-full w-full bg-zinc-950" />}>
-            <LazyTerminalView tabId={focusedTabId} />
-          </Suspense>
+        <div className="relative min-h-0 flex-1 border-b border-zinc-800">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={focusedTabId ?? "empty"}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.1 }}
+              className="absolute inset-0"
+            >
+              <Suspense fallback={<div className="h-full w-full bg-zinc-950" />}>
+                <LazyTerminalView tabId={focusedTabId} />
+              </Suspense>
+            </motion.div>
+          </AnimatePresence>
         </div>
         <HUDPanel />
       </section>

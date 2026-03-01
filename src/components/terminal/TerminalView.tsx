@@ -1,12 +1,18 @@
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
 import { useAtomValue, useStore } from "jotai";
 import { useCallback, useEffect, useRef } from "react";
 
+import { hudMetricsAtom } from "@/atoms/hud";
+import { terminalFontSizeAtom } from "@/atoms/settings";
 import { tabAtom } from "@/atoms/spaces";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { invokeTauri, isTauriRuntimeAvailable } from "@/lib/tauri";
-import type { AIProvider, ProcessStatus } from "@/types";
+import {
+  getOrCreateTerminal,
+  setTerminalCacheSessionId,
+  terminalCacheMap,
+  writeToTerminalCache,
+} from "@/lib/terminal-cache";
+import type { AIProvider, HUDMetrics, ProcessStatus } from "@/types";
 
 import "@xterm/xterm/css/xterm.css";
 
@@ -42,106 +48,103 @@ function sanitizeTerminalOutput(payload: string, provider: AIProvider): string {
 export function TerminalView({ tabId }: TerminalViewProps) {
   const tab = useAtomValue(tabAtom(tabId ?? "__none__"));
   const store = useStore();
+  const fontSize = useAtomValue(terminalFontSizeAtom);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const terminalRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
-  const currentSessionIdRef = useRef<string | null>(null);
+  const activeTabIdRef = useRef<string | null>(null);
 
   const setTabSessionAndStatus = useCallback(
-    (nextSessionId: string | null, nextStatus: ProcessStatus) => {
-      if (!tabId) {
-        return;
-      }
-
-      const currentTab = store.get(tabAtom(tabId));
+    (targetTabId: string, nextSessionId: string | null, nextStatus: ProcessStatus) => {
+      const currentTab = store.get(tabAtom(targetTabId));
       if (!currentTab) {
         return;
       }
 
-      store.set(tabAtom(tabId), {
+      store.set(tabAtom(targetTabId), {
         ...currentTab,
         sessionId: nextSessionId,
         processStatus: nextStatus,
         lastActivityAt: Date.now(),
       });
     },
-    [store, tabId],
+    [store],
   );
 
-  useEffect(() => {
-    if (!containerRef.current || terminalRef.current) {
+  const handleInput = useCallback((data: string, inputTabId: string) => {
+    const cached = terminalCacheMap.get(inputTabId);
+    if (!cached?.sessionId) {
       return;
     }
 
-    const terminal = new Terminal({
-      fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-      fontSize: 14,
-      cursorBlink: true,
-      scrollback: 10000,
-      theme: {
-        background: "#09090B",
-        foreground: "#FAFAFA",
-      },
+    void invokeTauri<void>("write_to_session", {
+      sessionId: cached.sessionId,
+      data: data.normalize("NFC"),
     });
+  }, []);
 
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
+  // Attach/detach terminal to DOM on tab switch
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
 
-    // Keep default renderer for IME stability (Korean/Japanese/Chinese input).
+    const prevTabId = activeTabIdRef.current;
+    activeTabIdRef.current = tabId;
 
-    terminal.open(containerRef.current);
-    fitAddon.fit();
-
-    const dataDisposable = terminal.onData((data) => {
-      const sessionId = currentSessionIdRef.current;
-      if (!sessionId) {
-        return;
+    // Detach previous terminal from DOM (keep instance alive)
+    if (prevTabId && prevTabId !== tabId) {
+      const prevCached = terminalCacheMap.get(prevTabId);
+      if (prevCached) {
+        const termElement = prevCached.terminal.element;
+        if (termElement?.parentElement === container) {
+          container.removeChild(termElement);
+        }
       }
+    }
 
-      void invokeTauri<void>("write_to_session", { sessionId, data: data.normalize("NFC") });
-    });
+    if (!tabId) {
+      return;
+    }
+
+    const cached = getOrCreateTerminal(tabId, fontSize, handleInput);
+
+    // Attach to DOM
+    if (cached.terminal.element) {
+      container.appendChild(cached.terminal.element);
+      cached.fitAddon.fit();
+    } else {
+      cached.terminal.open(container);
+      cached.fitAddon.fit();
+    }
 
     function onResize() {
-      fitAddon.fit();
-
-      const sessionId = currentSessionIdRef.current;
-      if (!sessionId) {
-        return;
+      cached.fitAddon.fit();
+      if (cached.sessionId) {
+        void invokeTauri<void>("resize_session", {
+          sessionId: cached.sessionId,
+          cols: cached.terminal.cols,
+          rows: cached.terminal.rows,
+        });
       }
-
-      void invokeTauri<void>("resize_session", {
-        sessionId,
-        cols: terminal.cols,
-        rows: terminal.rows,
-      });
     }
 
     window.addEventListener("resize", onResize);
 
-    terminalRef.current = terminal;
-    fitAddonRef.current = fitAddon;
-
     return () => {
       window.removeEventListener("resize", onResize);
-      dataDisposable.dispose();
-      terminal.dispose();
-      terminalRef.current = null;
-      fitAddonRef.current = null;
     };
-  }, []);
+  }, [tabId, fontSize, handleInput]);
 
+  // Session management: spawn or attach session for current tab
   useEffect(() => {
-    const maybeTerminal = terminalRef.current;
-    if (!maybeTerminal) {
+    if (!tabId || !tab) {
       return;
     }
-    const term = maybeTerminal;
 
-    if (!tabId || !tab) {
-      term.clear();
-      term.writeln("No active tab.");
-      currentSessionIdRef.current = null;
+    const currentTabId = tabId;
+    const cached = terminalCacheMap.get(currentTabId);
+    if (!cached) {
       return;
     }
 
@@ -149,27 +152,34 @@ export function TerminalView({ tabId }: TerminalViewProps) {
     const existingSessionId = activeTab.sessionId;
 
     async function ensureSession(): Promise<void> {
+      if (!cached) return;
+
       if (!isTauriRuntimeAvailable()) {
-        term.clear();
-        term.writeln(`[${activeTab.provider}] Tauri runtime unavailable in web mode.`);
-        term.writeln("Run `bun run tauri dev` to spawn real PTY sessions.");
-        currentSessionIdRef.current = null;
+        if (!cached.sessionId) {
+          cached.terminal.writeln(`[${activeTab.provider}] Tauri runtime unavailable in web mode.`);
+          cached.terminal.writeln("Run `bun run tauri dev` to spawn real PTY sessions.");
+        }
         return;
       }
 
       if (existingSessionId) {
-        if (currentSessionIdRef.current === existingSessionId) {
+        if (cached.sessionId === existingSessionId) {
           return;
         }
-
-        term.clear();
-        currentSessionIdRef.current = existingSessionId;
-        term.writeln(`[${activeTab.provider}] attached to session ${existingSessionId}`);
+        cached.sessionId = existingSessionId;
         return;
       }
 
-      term.clear();
-      term.writeln(`[${activeTab.provider}] spawning session...`);
+      if (cached.sessionId) {
+        return;
+      }
+
+      // Only auto-spawn for fresh tabs; don't retry after disconnect/error
+      if (activeTab.processStatus !== "idle") {
+        return;
+      }
+
+      cached.terminal.writeln(`[${activeTab.provider}] spawning session...`);
 
       try {
         const spawnedSessionId = await invokeTauri<string>("spawn_session", {
@@ -177,20 +187,20 @@ export function TerminalView({ tabId }: TerminalViewProps) {
           cwd: activeTab.cwd,
         });
 
-        currentSessionIdRef.current = spawnedSessionId;
-        setTabSessionAndStatus(spawnedSessionId, "running");
+        cached.sessionId = spawnedSessionId;
+        setTabSessionAndStatus(currentTabId, spawnedSessionId, "running");
 
-        fitAddonRef.current?.fit();
+        cached.fitAddon.fit();
         await invokeTauri<void>("resize_session", {
           sessionId: spawnedSessionId,
-          cols: term.cols,
-          rows: term.rows,
+          cols: cached.terminal.cols,
+          rows: cached.terminal.rows,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        term.writeln(`Failed to spawn session: ${message}`);
-        setTabSessionAndStatus(null, "error");
-        currentSessionIdRef.current = null;
+        cached.terminal.writeln(`Failed to spawn session: ${message}`);
+        cached.sessionId = null;
+        setTabSessionAndStatus(currentTabId, null, "error");
       }
     }
 
@@ -211,8 +221,8 @@ export function TerminalView({ tabId }: TerminalViewProps) {
       }
 
       const sanitizedPayload = sanitizeTerminalOutput(payload, currentTab.provider);
-      if (terminalRef.current && sanitizedPayload.length > 0) {
-        terminalRef.current.write(sanitizedPayload);
+      if (sanitizedPayload.length > 0) {
+        writeToTerminalCache(tabId, sanitizedPayload);
       }
 
       store.set(tabAtom(tabId), {
@@ -226,21 +236,77 @@ export function TerminalView({ tabId }: TerminalViewProps) {
 
   const handleStatus = useCallback(
     (status: ProcessStatus) => {
-      if (!sessionId) {
+      if (!sessionId || !tabId) {
         return;
       }
 
       if (status === "disconnected" || status === "error") {
-        currentSessionIdRef.current = null;
+        setTerminalCacheSessionId(tabId, null);
       }
 
-      setTabSessionAndStatus(status === "disconnected" ? null : sessionId, status);
+      setTabSessionAndStatus(tabId, status === "disconnected" ? null : sessionId, status);
     },
-    [sessionId, setTabSessionAndStatus],
+    [sessionId, setTabSessionAndStatus, tabId],
+  );
+
+  // Handle metrics events from Rust backend
+  const handleMetrics = useCallback(
+    (update: {
+      activeTools?: string[];
+      model?: string | null;
+      cost?: number | null;
+      tokensIn?: number | null;
+      tokensOut?: number | null;
+      contextUsed?: number | null;
+      contextTotal?: number | null;
+    }) => {
+      if (!sessionId || !tabId) {
+        return;
+      }
+
+      const currentTab = store.get(tabAtom(tabId));
+      if (!currentTab) {
+        return;
+      }
+
+      const existing = store.get(hudMetricsAtom(sessionId));
+      const merged: HUDMetrics = {
+        provider: currentTab.provider,
+        model: update.model ?? existing?.model ?? null,
+        contextWindow:
+          update.contextUsed != null && update.contextTotal != null
+            ? { used: update.contextUsed, total: update.contextTotal }
+            : (existing?.contextWindow ?? null),
+        tokens:
+          update.tokensIn != null || update.tokensOut != null
+            ? {
+                input: update.tokensIn ?? existing?.tokens?.input ?? 0,
+                output: update.tokensOut ?? existing?.tokens?.output ?? 0,
+              }
+            : (existing?.tokens ?? null),
+        cost: update.cost ?? existing?.cost ?? null,
+        rateLimit: existing?.rateLimit ?? null,
+        activeTools: update.activeTools?.length
+          ? update.activeTools
+          : (existing?.activeTools ?? []),
+        sessionDuration: existing?.sessionDuration ?? 0,
+        connectionStatus: "connected",
+      };
+
+      store.set(hudMetricsAtom(sessionId), merged);
+    },
+    [sessionId, store, tabId],
   );
 
   useTauriEvent<string>(sessionId ? `pty-output-${sessionId}` : null, handleOutput);
   useTauriEvent<ProcessStatus>(sessionId ? `session-status-${sessionId}` : null, handleStatus);
+  useTauriEvent(sessionId ? `metrics-${sessionId}` : null, handleMetrics);
 
-  return <div ref={containerRef} className="h-full w-full" />;
+  return (
+    <div
+      ref={containerRef}
+      className="h-full w-full"
+      style={{ background: "var(--color-background)" }}
+    />
+  );
 }

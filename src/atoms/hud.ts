@@ -17,25 +17,36 @@ export const activeHudMetricsAtom = atom((get): HUDMetrics | null => {
     return null;
   }
 
+  // If we have real metrics from the backend, use them
+  if (focusedTab.sessionId) {
+    const realMetrics = get(hudMetricsAtom(focusedTab.sessionId));
+    if (realMetrics) {
+      return realMetrics;
+    }
+  }
+
+  // Fallback: basic info derived from tab state (no dummy data)
   return {
     provider: focusedTab.provider,
     model:
       focusedTab.provider === "claude-code"
         ? "opus-4"
         : focusedTab.provider === "codex-cli"
-          ? "gpt-5"
+          ? "gpt-4o"
           : focusedTab.provider === "gemini-cli"
             ? "gemini-2.0-pro"
-            : "custom",
-    contextWindow: { used: 78, total: 100 },
-    tokens: { input: 12300, output: 8100 },
-    cost: 1.23,
-    rateLimit: { remaining: 45, total: 60 },
-    activeTools: focusedTab.provider === "gemini-cli" ? ["Chat"] : ["Read", "Edit", "Grep"],
-    sessionDuration: 83 * 60,
+            : null,
+    contextWindow: null,
+    tokens: null,
+    cost: null,
+    rateLimit: null,
+    activeTools: [],
+    sessionDuration: 0,
     connectionStatus:
       focusedTab.processStatus === "disconnected" || focusedTab.processStatus === "error"
         ? "disconnected"
-        : "connected",
+        : focusedTab.processStatus === "running" || focusedTab.processStatus === "processing"
+          ? "connected"
+          : "disconnected",
   };
 });

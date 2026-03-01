@@ -1,4 +1,7 @@
-use crate::provider::{build_provider_command, detect_providers as detect_provider_paths, DetectedProvider};
+use crate::metrics::{create_parser, MetricParser};
+use crate::provider::{
+    build_provider_command, detect_providers as detect_provider_paths, DetectedProvider,
+};
 use crate::state::{AppState, PtySession, SessionStatus};
 use portable_pty::{native_pty_system, PtySize};
 use std::io::{Read, Write};
@@ -58,7 +61,9 @@ pub async fn spawn_session(
         .insert(session_id.clone(), Arc::clone(&session));
 
     emit_status(&app, &session_id, SessionStatus::Running)?;
-    spawn_reader_task(app, Arc::clone(&session), reader);
+
+    let parser = create_parser(&provider);
+    spawn_reader_task(app, Arc::clone(&session), reader, parser);
 
     Ok(session_id)
 }
@@ -149,7 +154,12 @@ pub async fn detect_providers() -> Result<Vec<DetectedProvider>, String> {
     Ok(detect_provider_paths())
 }
 
-fn spawn_reader_task(app: AppHandle, session: Arc<PtySession>, mut reader: Box<dyn Read + Send>) {
+fn spawn_reader_task(
+    app: AppHandle,
+    session: Arc<PtySession>,
+    mut reader: Box<dyn Read + Send>,
+    mut parser: Box<dyn MetricParser>,
+) {
     task::spawn_blocking(move || {
         let mut buf = vec![0_u8; 16 * 1024];
         let mut pending_utf8: Vec<u8> = Vec::new();
@@ -180,7 +190,9 @@ fn spawn_reader_task(app: AppHandle, session: Arc<PtySession>, mut reader: Box<d
                             Err(error) => {
                                 let valid_up_to = error.valid_up_to();
                                 if valid_up_to > 0 {
-                                    chunk.push_str(&String::from_utf8_lossy(&pending_utf8[..valid_up_to]));
+                                    chunk.push_str(
+                                        &String::from_utf8_lossy(&pending_utf8[..valid_up_to]),
+                                    );
                                     pending_utf8.drain(..valid_up_to);
                                 }
 
@@ -189,16 +201,22 @@ fn spawn_reader_task(app: AppHandle, session: Arc<PtySession>, mut reader: Box<d
                                 }
 
                                 if !pending_utf8.is_empty() {
-                                    chunk.push('�');
+                                    chunk.push('\u{FFFD}');
                                     pending_utf8.drain(..1);
                                 }
                             }
                         }
                     }
 
-                    let event_name = format!("pty-output-{}", session.id);
                     if !chunk.is_empty() {
-                        let _ = app.emit(event_name.as_str(), chunk);
+                        let event_name = format!("pty-output-{}", session.id);
+                        let _ = app.emit(event_name.as_str(), &chunk);
+
+                        // Parse metrics from the chunk
+                        if let Some(metric_update) = parser.parse_chunk(&chunk) {
+                            let metrics_event = format!("metrics-{}", session.id);
+                            let _ = app.emit(metrics_event.as_str(), metric_update);
+                        }
                     }
                 }
                 Err(_) => {

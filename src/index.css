@@ -1,7 +1,14 @@
 @import "tailwindcss";
 
 @theme {
-  /* Arc-inspired Dark Theme */
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+:root {
+  --sidebar-width: 240px;
+
+  /* Dark theme (default) */
   --color-background: #09090b;
   --color-sidebar: #18181b;
   --color-sidebar-hover: #27272a;
@@ -16,13 +23,18 @@
   --color-status-processing: #f59e0b;
   --color-status-error: #ef4444;
   --color-status-idle: #71717a;
-
-  --font-sans: "Inter", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", monospace;
 }
 
-:root {
-  --sidebar-width: 240px;
+html.light {
+  --color-background: #fafafa;
+  --color-sidebar: #f4f4f5;
+  --color-sidebar-hover: #e4e4e7;
+  --color-surface: #ffffff;
+  --color-border: #e4e4e7;
+
+  --color-text-primary: #09090b;
+  --color-text-secondary: #52525b;
+  --color-text-muted: #a1a1aa;
 }
 
 html,
@@ -64,4 +76,9 @@ body {
 /* HUD metric bar fill — CSS transition for smooth value changes */
 .metric-bar-fill {
   transition: width 300ms ease-out;
+}
+
+/* Tab item hover transition */
+.tab-item {
+  transition: background-color 100ms ease;
 }

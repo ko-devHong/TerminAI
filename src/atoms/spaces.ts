@@ -1,12 +1,12 @@
 import { atom } from "jotai";
 import { atomFamily, atomWithStorage } from "jotai/utils";
-
 import {
   INITIAL_FAVORITE_TAB_IDS,
   INITIAL_FOCUSED_TAB_ID,
   INITIAL_SPACES,
   INITIAL_TABS,
 } from "@/lib/constants";
+import { disposeTerminalCache } from "@/lib/terminal-cache";
 import type { AIProvider, Space, Tab } from "@/types";
 
 export const spacesAtom = atomWithStorage<Space[]>("terminai:spaces", []);
@@ -355,6 +355,7 @@ export const closeTabAtom = atom(null, (get, set, tabId: string) => {
     favoriteTabIds.filter((id) => id !== tabId),
   );
   set(tabAtom(tabId), null);
+  disposeTerminalCache(tabId);
   const nextTabCwds = { ...get(tabCwdsAtom) };
   delete nextTabCwds[tabId];
   set(tabCwdsAtom, nextTabCwds);

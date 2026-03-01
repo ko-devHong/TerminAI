@@ -128,7 +128,10 @@ export function Sidebar({
 
   return (
     <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <aside className="relative flex h-full w-(--sidebar-width) shrink-0 border-r border-zinc-800 bg-zinc-900">
+      <aside
+        className="relative flex h-full w-(--sidebar-width) shrink-0 border-r"
+        style={{ borderColor: "var(--color-border)", background: "var(--color-sidebar)" }}
+      >
         <div className="flex h-full w-full flex-col gap-3 p-2">
           <button
             type="button"
