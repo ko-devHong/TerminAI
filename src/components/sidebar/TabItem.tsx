@@ -1,7 +1,8 @@
 import { useAtomValue, useSetAtom } from "jotai";
-import { AlertCircle, Circle, Loader2 } from "lucide-react";
+import { AlertCircle, Circle, Loader2, X } from "lucide-react";
 
-import { focusTabAtom, tabAtom } from "@/atoms/spaces";
+import { closeTabAtom, focusTabAtom, tabAtom } from "@/atoms/spaces";
+import { invokeTauri } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 interface TabItemProps {
@@ -27,25 +28,54 @@ function StatusIcon({ status }: { status: string }) {
 export function TabItem({ tabId }: TabItemProps) {
   const tab = useAtomValue(tabAtom(tabId));
   const focusTab = useSetAtom(focusTabAtom);
+  const closeTab = useSetAtom(closeTabAtom);
 
   if (!tab) {
     return null;
   }
+  const currentTab = tab;
+
+  async function handleClose(): Promise<void> {
+    if (currentTab.sessionId) {
+      try {
+        await invokeTauri<void>("kill_session", { sessionId: currentTab.sessionId });
+      } catch {
+        // Session may already be gone; local close still proceeds.
+      }
+    }
+
+    closeTab(currentTab.id);
+  }
 
   return (
-    <button
-      type="button"
-      onClick={() => focusTab(tab.id)}
+    <div
       className={cn(
-        "tab-item flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors",
-        tab.isFocused
+        "tab-item group flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors",
+        currentTab.isFocused
           ? "border-l-2 border-emerald-500 bg-zinc-800 text-zinc-50"
           : "text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100",
       )}
-      title={`${tab.name} (${tab.provider})`}
     >
-      <StatusIcon status={tab.processStatus} />
-      <span className="truncate">{tab.name}</span>
-    </button>
+      <button
+        type="button"
+        onClick={() => focusTab(currentTab.id)}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        title={`${currentTab.name} (${currentTab.provider})`}
+      >
+        <StatusIcon status={currentTab.processStatus} />
+        <span className="truncate">{currentTab.name}</span>
+      </button>
+
+      <button
+        type="button"
+        aria-label={`Close tab ${currentTab.name}`}
+        onClick={() => {
+          void handleClose();
+        }}
+        className="rounded p-1 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-700 hover:text-zinc-100"
+      >
+        <X className="size-3" />
+      </button>
+    </div>
   );
 }

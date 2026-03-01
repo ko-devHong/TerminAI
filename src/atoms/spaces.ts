@@ -124,3 +124,42 @@ export const createTabAtom = atom(null, (get, set, payload: CreateTabPayload) =>
 
   set(focusTabAtom, newTabId);
 });
+
+export const closeTabAtom = atom(null, (get, set, tabId: string) => {
+  const targetTab = get(tabAtom(tabId));
+  if (!targetTab) {
+    return;
+  }
+
+  const spaces = get(spacesAtom);
+  const favoriteTabIds = get(favoriteTabIdsAtom);
+  const focusedTabId = get(focusedTabIdAtom);
+
+  const nextSpaces = spaces.map((space) => ({
+    ...space,
+    tabIds: space.tabIds.filter((id) => id !== tabId),
+  }));
+
+  set(spacesAtom, nextSpaces);
+  set(
+    favoriteTabIdsAtom,
+    favoriteTabIds.filter((id) => id !== tabId),
+  );
+  set(tabAtom(tabId), null);
+
+  if (focusedTabId !== tabId) {
+    return;
+  }
+
+  const sourceSpace = nextSpaces.find((space) => space.id === targetTab.spaceId);
+  const fallbackInSpace = sourceSpace?.tabIds[sourceSpace.tabIds.length - 1] ?? null;
+  const fallbackGlobal = nextSpaces.find((space) => space.tabIds.length > 0)?.tabIds[0] ?? null;
+  const nextFocusedTabId = fallbackInSpace ?? fallbackGlobal;
+
+  if (nextFocusedTabId) {
+    set(focusTabAtom, nextFocusedTabId);
+    return;
+  }
+
+  set(focusedTabIdAtom, null);
+});
