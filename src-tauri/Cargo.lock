@@ -4286,6 +4286,7 @@ dependencies = [
 name = "terminai"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "portable-pty",
  "regex",
  "reqwest 0.12.28",

@@ -14,7 +14,13 @@ import {
   upgradeToIMEInput,
   writeToTerminalCache,
 } from "@/lib/terminal-cache";
-import type { AIProvider, HUDMetrics, MetricUpdate, ProcessStatus } from "@/types";
+import type {
+  AIProvider,
+  CliQuotaSnapshot,
+  HUDMetrics,
+  MetricUpdate,
+  ProcessStatus,
+} from "@/types";
 
 import "@xterm/xterm/css/xterm.css";
 
@@ -24,6 +30,47 @@ interface TerminalViewProps {
 
 const GEMINI_SPINNER_LINE_PATTERN = /^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+.*\(esc to cancel,\s*\d+s\).*$/u;
 const GEMINI_SHORTCUT_HINT_PATTERN = /^\s*\?\s*for shortcuts\s*$/iu;
+const CODEX_FIVE_HOUR_LEFT_RE =
+  /5h\s+limit:\s*\[[^\]]*\]\s*(\d+)%\s*left(?:\s*\(resets\s+([^)]+)\))?/i;
+const CODEX_WEEKLY_LEFT_RE =
+  /Weekly\s+limit:\s*\[[^\]]*\]\s*(\d+)%\s*left(?:\s*\(resets\s+([^)]+)\))?/i;
+const GEMINI_USAGE_ROW_RE =
+  /^\s*(gemini-[\w.-]+)\s+\S+\s+(\d+(?:\.\d+)?)%\s+resets\s+in\s+([0-9hms ]+)\s*$/gim;
+
+function parseCodexResetLabelToSeconds(label: string): number | null {
+  const match = /(\d{1,2}):(\d{2})\s+on\s+(\d{1,2})\s+([A-Za-z]{3})/i.exec(label.trim());
+  if (!match) return null;
+
+  const monthMap: Record<string, number> = {
+    jan: 0,
+    feb: 1,
+    mar: 2,
+    apr: 3,
+    may: 4,
+    jun: 5,
+    jul: 6,
+    aug: 7,
+    sep: 8,
+    oct: 9,
+    nov: 10,
+    dec: 11,
+  };
+
+  const hour = Number.parseInt(match[1], 10);
+  const minute = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+  const month = monthMap[match[4].toLowerCase()];
+  if (Number.isNaN(hour) || Number.isNaN(minute) || Number.isNaN(day) || month == null) {
+    return null;
+  }
+
+  const now = new Date();
+  const target = new Date(now.getFullYear(), month, day, hour, minute, 0, 0);
+  if (target.getTime() < now.getTime()) {
+    target.setFullYear(target.getFullYear() + 1);
+  }
+  return Math.max(0, Math.floor((target.getTime() - now.getTime()) / 1000));
+}
 
 function sanitizeTerminalOutput(payload: string, provider: AIProvider): string {
   if (provider !== "gemini-cli") {
@@ -227,6 +274,97 @@ export function TerminalView({ tabId }: TerminalViewProps) {
 
   const sessionId = tab?.sessionId ?? null;
 
+  useEffect(() => {
+    if (
+      !tabId ||
+      !sessionId ||
+      !tab ||
+      tab.provider !== "codex-cli" ||
+      !isTauriRuntimeAvailable()
+    ) {
+      return;
+    }
+
+    let mounted = true;
+    let intervalId: number | undefined;
+    let running = false;
+
+    const pollCliQuota = async () => {
+      if (!mounted || running) {
+        return;
+      }
+      running = true;
+      try {
+        const snapshot = await invokeTauri<CliQuotaSnapshot | null>("fetch_cli_quota", {
+          provider: tab.provider,
+          cwd: tab.cwd,
+        });
+
+        if (!mounted || !snapshot) {
+          return;
+        }
+
+        const currentTab = store.get(tabAtom(tabId));
+        if (!currentTab?.sessionId || currentTab.sessionId !== sessionId) {
+          return;
+        }
+
+        const existing = store.get(hudMetricsAtom(sessionId));
+        store.set(hudMetricsAtom(sessionId), {
+          provider: currentTab.provider,
+          model: snapshot.model ?? existing?.model ?? null,
+          contextWindow: existing?.contextWindow ?? null,
+          tokens: existing?.tokens ?? null,
+          cost: snapshot.costUsd ?? existing?.cost ?? null,
+          rateLimit:
+            snapshot.fiveHourLeftPercent != null || snapshot.sevenDayLeftPercent != null
+              ? {
+                  fiveHourPercent:
+                    snapshot.fiveHourLeftPercent != null
+                      ? 100 - Math.max(0, Math.min(100, snapshot.fiveHourLeftPercent))
+                      : (existing?.rateLimit?.fiveHourPercent ?? 0),
+                  sevenDayPercent:
+                    snapshot.sevenDayLeftPercent != null
+                      ? 100 - Math.max(0, Math.min(100, snapshot.sevenDayLeftPercent))
+                      : (existing?.rateLimit?.sevenDayPercent ?? 0),
+                  fiveHourResetSeconds: existing?.rateLimit?.fiveHourResetSeconds ?? 0,
+                  sevenDayResetSeconds: existing?.rateLimit?.sevenDayResetSeconds ?? 0,
+                }
+              : (existing?.rateLimit ?? null),
+          billing: existing?.billing ?? null,
+          plan: existing?.plan ?? null,
+          hasCredentials: existing?.hasCredentials ?? false,
+          activeTools: existing?.activeTools ?? [],
+          sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
+          detailedStatus: existing?.detailedStatus ?? currentTab.processStatus,
+          connectionStatus: existing?.connectionStatus ?? "connected",
+          rateLimitCountdown: existing?.rateLimitCountdown ?? null,
+          rateLimitDetectedAt: existing?.rateLimitDetectedAt ?? null,
+          rateLimitFiveHourResetLabel:
+            snapshot.fiveHourResetLabel ?? existing?.rateLimitFiveHourResetLabel ?? null,
+          rateLimitSevenDayResetLabel:
+            snapshot.sevenDayResetLabel ?? existing?.rateLimitSevenDayResetLabel ?? null,
+        });
+      } catch {
+        // Best-effort hidden poll; keep existing HUD data on failure.
+      } finally {
+        running = false;
+      }
+    };
+
+    void pollCliQuota();
+    intervalId = window.setInterval(() => {
+      void pollCliQuota();
+    }, 120_000);
+
+    return () => {
+      mounted = false;
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [tabId, sessionId, tab, store]);
+
   const handleOutput = useCallback(
     (payload: string) => {
       if (!tabId) {
@@ -241,6 +379,126 @@ export function TerminalView({ tabId }: TerminalViewProps) {
       const sanitizedPayload = sanitizeTerminalOutput(payload, currentTab.provider);
       if (sanitizedPayload.length > 0) {
         writeToTerminalCache(tabId, sanitizedPayload);
+      }
+
+      if (currentTab.provider === "codex-cli" && currentTab.sessionId) {
+        const five = CODEX_FIVE_HOUR_LEFT_RE.exec(sanitizedPayload);
+        const seven = CODEX_WEEKLY_LEFT_RE.exec(sanitizedPayload);
+        if (five || seven) {
+          const existing = store.get(hudMetricsAtom(currentTab.sessionId));
+          const fiveLeft = five ? Number.parseInt(five[1], 10) : Number.NaN;
+          const sevenLeft = seven ? Number.parseInt(seven[1], 10) : Number.NaN;
+          const fiveResetLabel = five?.[2]?.trim() ?? existing?.rateLimitFiveHourResetLabel ?? null;
+          const sevenResetLabel =
+            seven?.[2]?.trim() ?? existing?.rateLimitSevenDayResetLabel ?? null;
+
+          store.set(hudMetricsAtom(currentTab.sessionId), {
+            provider: currentTab.provider,
+            model: existing?.model ?? null,
+            contextWindow: existing?.contextWindow ?? null,
+            tokens: existing?.tokens ?? null,
+            cost: existing?.cost ?? null,
+            rateLimit: {
+              fiveHourPercent: Number.isNaN(fiveLeft)
+                ? (existing?.rateLimit?.fiveHourPercent ?? 0)
+                : 100 - Math.max(0, Math.min(100, fiveLeft)),
+              sevenDayPercent: Number.isNaN(sevenLeft)
+                ? (existing?.rateLimit?.sevenDayPercent ?? 0)
+                : 100 - Math.max(0, Math.min(100, sevenLeft)),
+              fiveHourResetSeconds:
+                fiveResetLabel != null
+                  ? (parseCodexResetLabelToSeconds(fiveResetLabel) ??
+                    existing?.rateLimit?.fiveHourResetSeconds ??
+                    0)
+                  : (existing?.rateLimit?.fiveHourResetSeconds ?? 0),
+              sevenDayResetSeconds:
+                sevenResetLabel != null
+                  ? (parseCodexResetLabelToSeconds(sevenResetLabel) ??
+                    existing?.rateLimit?.sevenDayResetSeconds ??
+                    0)
+                  : (existing?.rateLimit?.sevenDayResetSeconds ?? 0),
+            },
+            billing: existing?.billing ?? null,
+            plan: existing?.plan ?? null,
+            hasCredentials: existing?.hasCredentials ?? false,
+            activeTools: existing?.activeTools ?? [],
+            sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
+            detailedStatus: existing?.detailedStatus ?? currentTab.processStatus,
+            connectionStatus: existing?.connectionStatus ?? "connected",
+            rateLimitCountdown: existing?.rateLimitCountdown ?? null,
+            rateLimitDetectedAt: existing?.rateLimitDetectedAt ?? null,
+            rateLimitFiveHourResetLabel: fiveResetLabel,
+            rateLimitSevenDayResetLabel: sevenResetLabel,
+          });
+        }
+      }
+
+      if (currentTab.provider === "gemini-cli" && currentTab.sessionId) {
+        const rows = Array.from(sanitizedPayload.matchAll(GEMINI_USAGE_ROW_RE));
+        if (rows.length > 0) {
+          const existing = store.get(hudMetricsAtom(currentTab.sessionId));
+          let shortLeft: number | null = null;
+          let shortResetLabel: string | null = null;
+          let longLeft: number | null = null;
+          let longResetLabel: string | null = null;
+
+          for (const row of rows) {
+            const remaining = Number.parseFloat(row[2]);
+            const resetLabel = row[3].trim();
+            if (Number.isNaN(remaining)) {
+              continue;
+            }
+
+            const duration = /(?:(\d+)h)?\s*(?:(\d+)m)?/i.exec(resetLabel);
+            const hours = Number.parseInt(duration?.[1] ?? "0", 10);
+            const minutes = Number.parseInt(duration?.[2] ?? "0", 10);
+            const totalHours = hours + minutes / 60;
+            const isShortWindow = totalHours > 0 && totalHours <= 8;
+
+            if (isShortWindow) {
+              if (shortLeft == null || remaining < shortLeft) {
+                shortLeft = remaining;
+                shortResetLabel = `in ${resetLabel}`;
+              }
+            } else if (longLeft == null || remaining < longLeft) {
+              longLeft = remaining;
+              longResetLabel = `in ${resetLabel}`;
+            }
+          }
+
+          store.set(hudMetricsAtom(currentTab.sessionId), {
+            provider: currentTab.provider,
+            model: existing?.model ?? null,
+            contextWindow: existing?.contextWindow ?? null,
+            tokens: existing?.tokens ?? null,
+            cost: existing?.cost ?? null,
+            rateLimit: {
+              fiveHourPercent:
+                shortLeft == null
+                  ? (existing?.rateLimit?.fiveHourPercent ?? 0)
+                  : 100 - Math.max(0, Math.min(100, shortLeft)),
+              sevenDayPercent:
+                longLeft == null
+                  ? (existing?.rateLimit?.sevenDayPercent ?? 0)
+                  : 100 - Math.max(0, Math.min(100, longLeft)),
+              fiveHourResetSeconds: existing?.rateLimit?.fiveHourResetSeconds ?? 0,
+              sevenDayResetSeconds: existing?.rateLimit?.sevenDayResetSeconds ?? 0,
+            },
+            billing: existing?.billing ?? null,
+            plan: existing?.plan ?? null,
+            hasCredentials: existing?.hasCredentials ?? false,
+            activeTools: existing?.activeTools ?? [],
+            sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
+            detailedStatus: existing?.detailedStatus ?? currentTab.processStatus,
+            connectionStatus: existing?.connectionStatus ?? "connected",
+            rateLimitCountdown: existing?.rateLimitCountdown ?? null,
+            rateLimitDetectedAt: existing?.rateLimitDetectedAt ?? null,
+            rateLimitFiveHourResetLabel:
+              shortResetLabel ?? existing?.rateLimitFiveHourResetLabel ?? null,
+            rateLimitSevenDayResetLabel:
+              longResetLabel ?? existing?.rateLimitSevenDayResetLabel ?? null,
+          });
+        }
       }
 
       store.set(tabAtom(tabId), {

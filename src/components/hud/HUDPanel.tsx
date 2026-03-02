@@ -154,6 +154,16 @@ export function HUDPanel() {
         {/* Status */}
         <StatusDot status={currentStatus} />
         <span className="text-zinc-400">{currentStatus}</span>
+        {isCodex && metrics?.rateLimit ? (
+          <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">
+            5h {Math.round(100 - metrics.rateLimit.fiveHourPercent)}% left
+          </span>
+        ) : null}
+        {isCodex && metrics?.rateLimit ? (
+          <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">
+            7d {Math.round(100 - metrics.rateLimit.sevenDayPercent)}% left
+          </span>
+        ) : null}
         <RateLimitBadge
           countdown={metrics?.rateLimitCountdown ?? null}
           detectedAt={metrics?.rateLimitDetectedAt ?? null}

@@ -5,11 +5,14 @@ use crate::provider::{
 use crate::state::{AppState, PtySession, SessionStatus};
 use crate::statusline::StatuslineWatcher;
 use portable_pty::{native_pty_system, PtySize};
+use regex::Regex;
 use serde::Serialize;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+use tokio::process::Command as TokioCommand;
 use tokio::task;
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
 #[tauri::command]
@@ -208,6 +211,98 @@ pub async fn fetch_provider_usage(
         "gemini-cli" => crate::usage::fetch_gemini_usage(&credential).await.map(Some),
         _ => Ok(None),
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliQuotaSnapshot {
+    pub provider: String,
+    pub model: Option<String>,
+    pub five_hour_left_percent: Option<f64>,
+    pub seven_day_left_percent: Option<f64>,
+    pub five_hour_reset_label: Option<String>,
+    pub seven_day_reset_label: Option<String>,
+    pub cost_usd: Option<f64>,
+}
+
+#[tauri::command]
+pub async fn fetch_cli_quota(provider: String, cwd: String) -> Result<Option<CliQuotaSnapshot>, String> {
+    if provider != "codex-cli" {
+        return Ok(None);
+    }
+
+    let output = timeout(
+        Duration::from_secs(4),
+        TokioCommand::new("codex")
+        .arg("-C")
+        .arg(cwd)
+        .arg("exec")
+        .arg("--skip-git-repo-check")
+        .arg("/status")
+        .output(),
+    )
+    .await;
+
+    let output = match output {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => return Err(format!("failed to execute codex status: {e}")),
+        Err(_) => return Ok(None),
+    };
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok(parse_codex_status_output(&stdout))
+}
+
+fn parse_codex_status_output(text: &str) -> Option<CliQuotaSnapshot> {
+    let model_re = Regex::new(r"(?im)^\s*Model:\s+([^\n(]+(?:\([^)]+\))?)").ok()?;
+    let five_re = Regex::new(r"(?im)^\s*5h limit:\s+\[[^\]]*\]\s*(\d+(?:\.\d+)?)%\s*left(?:\s*\(resets\s+([^)]+)\))?").ok()?;
+    let week_re =
+        Regex::new(r"(?im)^\s*Weekly limit:\s+\[[^\]]*\]\s*(\d+(?:\.\d+)?)%\s*left(?:\s*\(resets\s+([^)]+)\))?").ok()?;
+    let cost_re = Regex::new(r"(?im)\$\s?(\d+(?:\.\d+)?)").ok()?;
+
+    let model = model_re
+        .captures(text)
+        .and_then(|c| c.get(1).map(|m| m.as_str().trim().to_string()));
+
+    let (five_left, five_reset) = if let Some(cap) = five_re.captures(text) {
+        (
+            cap.get(1).and_then(|m| m.as_str().parse::<f64>().ok()),
+            cap.get(2).map(|m| m.as_str().trim().to_string()),
+        )
+    } else {
+        (None, None)
+    };
+
+    let (week_left, week_reset) = if let Some(cap) = week_re.captures(text) {
+        (
+            cap.get(1).and_then(|m| m.as_str().parse::<f64>().ok()),
+            cap.get(2).map(|m| m.as_str().trim().to_string()),
+        )
+    } else {
+        (None, None)
+    };
+
+    let cost = cost_re
+        .captures(text)
+        .and_then(|c| c.get(1).and_then(|m| m.as_str().parse::<f64>().ok()));
+
+    if model.is_none() && five_left.is_none() && week_left.is_none() && cost.is_none() {
+        return None;
+    }
+
+    Some(CliQuotaSnapshot {
+        provider: "codex-cli".to_string(),
+        model,
+        five_hour_left_percent: five_left,
+        seven_day_left_percent: week_left,
+        five_hour_reset_label: five_reset,
+        seven_day_reset_label: week_reset,
+        cost_usd: cost,
+    })
 }
 
 #[derive(Serialize)]

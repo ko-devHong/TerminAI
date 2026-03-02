@@ -95,3 +95,13 @@ export interface MetricUpdate {
   status: string | null;
   rateLimitSeconds: number | null;
 }
+
+export interface CliQuotaSnapshot {
+  provider: AIProvider;
+  model: string | null;
+  fiveHourLeftPercent: number | null;
+  sevenDayLeftPercent: number | null;
+  fiveHourResetLabel: string | null;
+  sevenDayResetLabel: string | null;
+  costUsd: number | null;
+}
