@@ -42,6 +42,7 @@ pub struct Credential {
 fn find_claude_keychain_token() -> Option<String> {
     // Claude Code stores tokens under these service names
     let service_names = [
+        "Claude Code-credentials",
         "claude.ai",
         "api.claude.ai",
         "com.anthropic.claude-code",
@@ -53,15 +54,44 @@ fn find_claude_keychain_token() -> Option<String> {
             .output()
         {
             if output.status.success() {
-                let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !token.is_empty() {
-                    return Some(token);
+                let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if raw.is_empty() {
+                    continue;
+                }
+
+                if raw.starts_with('{') {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
+                        let nested = json.get("claudeAiOauth").unwrap_or(&json);
+                        if let Some(token) = nested.get("accessToken").and_then(|v| v.as_str()) {
+                            if !token.is_empty() {
+                                return Some(token.to_string());
+                            }
+                        }
+                    }
+                }
+
+                if !raw.is_empty() {
+                    return Some(raw);
                 }
             }
         }
     }
 
     None
+}
+
+fn find_claude_file_token() -> Option<String> {
+    let home = std::env::var_os("HOME")?;
+    let path = std::path::PathBuf::from(home)
+        .join(".claude")
+        .join(".credentials.json");
+    let content = std::fs::read_to_string(path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    let nested = json.get("claudeAiOauth").unwrap_or(&json);
+    nested
+        .get("accessToken")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
 }
 
 // ─── Codex: config file + env var ───────────────────────
@@ -118,7 +148,14 @@ pub fn discover_credential(provider: &str) -> Option<Credential> {
                     is_oauth: true,
                 });
             }
-            // Priority 2: ANTHROPIC_API_KEY env var
+            // Priority 2: ~/.claude/.credentials.json OAuth token
+            if let Some(token) = find_claude_file_token() {
+                return Some(Credential {
+                    token,
+                    is_oauth: true,
+                });
+            }
+            // Priority 3: ANTHROPIC_API_KEY env var
             if let Some(key) = std::env::var("ANTHROPIC_API_KEY").ok().filter(|v| !v.is_empty()) {
                 return Some(Credential {
                     token: key,
@@ -144,20 +181,67 @@ pub fn discover_credential(provider: &str) -> Option<Credential> {
 pub async fn fetch_claude_usage(credential: &Credential) -> Result<ProviderUsage, String> {
     let client = reqwest::Client::new();
 
-    // Try to get org/account info via Anthropic API
-    let auth_header = if credential.is_oauth {
-        format!("Bearer {}", credential.token)
-    } else {
-        credential.token.clone()
-    };
+    // Prefer OAuth usage endpoint when OAuth credential is available.
+    if credential.is_oauth {
+        let response = client
+            .get("https://api.anthropic.com/api/oauth/usage")
+            .header("Authorization", format!("Bearer {}", credential.token))
+            .send()
+            .await
+            .map_err(|e| format!("anthropic oauth usage request failed: {e}"))?;
 
-    // Attempt messages API with minimal request to extract rate limit headers
+        if response.status().is_success() {
+            let usage = response
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|e| format!("anthropic oauth usage parse failed: {e}"))?;
+
+            let five_pct = usage
+                .get("five_hour")
+                .and_then(|v| v.get("utilization"))
+                .and_then(|v| v.as_f64());
+            let seven_pct = usage
+                .get("seven_day")
+                .and_then(|v| v.get("utilization"))
+                .and_then(|v| v.as_f64());
+            let five_reset = usage
+                .get("five_hour")
+                .and_then(|v| v.get("resets_at"))
+                .and_then(|v| v.as_str())
+                .and_then(parse_reset_timestamp)
+                .unwrap_or(0);
+            let seven_reset = usage
+                .get("seven_day")
+                .and_then(|v| v.get("resets_at"))
+                .and_then(|v| v.as_str())
+                .and_then(parse_reset_timestamp)
+                .unwrap_or(0);
+
+            if five_pct.is_some() || seven_pct.is_some() {
+                return Ok(ProviderUsage {
+                    rate_limit: Some(RateLimit {
+                        five_hour_percent: five_pct.unwrap_or(0.0),
+                        seven_day_percent: seven_pct.unwrap_or(0.0),
+                        five_hour_reset_seconds: five_reset,
+                        seven_day_reset_seconds: seven_reset,
+                    }),
+                    billing: None,
+                    plan: None,
+                    has_credentials: true,
+                });
+            }
+        }
+    }
+
+    // API-key fallback: extract request limit headers from a minimal message API call.
     let response = client
         .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", &auth_header)
+        .header("x-api-key", &credential.token)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
-        .body(r#"{"model":"claude-sonnet-4-20250514","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#)
+        .body(
+            r#"{"model":"claude-sonnet-4-20250514","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#,
+        )
         .send()
         .await
         .map_err(|e| format!("anthropic api request failed: {e}"))?;

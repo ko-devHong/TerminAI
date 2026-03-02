@@ -80,6 +80,8 @@ export interface HUDMetrics {
   connectionStatus: "connected" | "disconnected" | "error";
   rateLimitCountdown: number | null;
   rateLimitDetectedAt: number | null;
+  rateLimitFiveHourResetLabel: string | null;
+  rateLimitSevenDayResetLabel: string | null;
 }
 
 export interface MetricUpdate {

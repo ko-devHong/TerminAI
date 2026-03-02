@@ -69,5 +69,7 @@ export const activeHudMetricsAtom = atom((get): HUDMetrics | null => {
           : "disconnected",
     rateLimitCountdown: null,
     rateLimitDetectedAt: null,
+    rateLimitFiveHourResetLabel: null,
+    rateLimitSevenDayResetLabel: null,
   };
 });

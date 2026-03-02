@@ -31,6 +31,12 @@ export function NewTabButton() {
     }
 
     createTab({ spaceId: nextSpaceId, provider, cwd: focusedTab?.cwd ?? defaultCwd });
+
+    // Prevent Enter from re-triggering this button while terminal tab is opening.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) {
+      active.blur();
+    }
   }
 
   return (

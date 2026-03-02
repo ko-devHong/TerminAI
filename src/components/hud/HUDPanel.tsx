@@ -72,9 +72,10 @@ export function HUDPanel() {
   }, [activeTab, now]);
 
   const contextPercent = useMemo(() => {
-    if (!metrics?.contextWindow) return 0;
+    if (!metrics?.contextWindow || metrics.contextWindow.total <= 0) return 0;
     return Math.round((metrics.contextWindow.used / metrics.contextWindow.total) * 100);
   }, [metrics?.contextWindow]);
+  const isCodex = activeTab?.provider === "codex-cli";
 
   function cycleMode() {
     const nextMode = mode === "compact" ? "expanded" : mode === "expanded" ? "hidden" : "compact";
@@ -163,7 +164,7 @@ export function HUDPanel() {
         <span className="ml-auto inline-flex items-center gap-3 text-zinc-400">
           <span className="inline-flex items-center gap-1">
             <DollarSign className="size-3" />
-            {metrics?.cost?.toFixed(2) ?? "0.00"}
+            {metrics?.cost != null ? metrics.cost.toFixed(2) : "-"}
           </span>
           <span className="inline-flex items-center gap-1">
             <Clock3 className="size-3" />
@@ -199,16 +200,44 @@ export function HUDPanel() {
               <>
                 <ProgressRow
                   label="5h Rate"
-                  percent={metrics.rateLimit.fiveHourPercent}
+                  percent={
+                    isCodex
+                      ? 100 - metrics.rateLimit.fiveHourPercent
+                      : metrics.rateLimit.fiveHourPercent
+                  }
+                  valueLabel={
+                    isCodex
+                      ? `${Math.round(100 - metrics.rateLimit.fiveHourPercent)}% left`
+                      : `${Math.round(metrics.rateLimit.fiveHourPercent)}% used`
+                  }
                   resetSeconds={metrics.rateLimit.fiveHourResetSeconds}
-                  tooltip={`${metrics.rateLimit.fiveHourPercent.toFixed(1)}% used — resets in ${formatResetTime(metrics.rateLimit.fiveHourResetSeconds)}`}
+                  resetLabel={metrics.rateLimitFiveHourResetLabel ?? null}
+                  tooltip={
+                    isCodex
+                      ? `${(100 - metrics.rateLimit.fiveHourPercent).toFixed(1)}% left`
+                      : `${metrics.rateLimit.fiveHourPercent.toFixed(1)}% used`
+                  }
                   glow
                 />
                 <ProgressRow
                   label="7d Rate"
-                  percent={metrics.rateLimit.sevenDayPercent}
+                  percent={
+                    isCodex
+                      ? 100 - metrics.rateLimit.sevenDayPercent
+                      : metrics.rateLimit.sevenDayPercent
+                  }
+                  valueLabel={
+                    isCodex
+                      ? `${Math.round(100 - metrics.rateLimit.sevenDayPercent)}% left`
+                      : `${Math.round(metrics.rateLimit.sevenDayPercent)}% used`
+                  }
                   resetSeconds={metrics.rateLimit.sevenDayResetSeconds}
-                  tooltip={`${metrics.rateLimit.sevenDayPercent.toFixed(1)}% used — resets in ${formatResetTime(metrics.rateLimit.sevenDayResetSeconds)}`}
+                  resetLabel={metrics.rateLimitSevenDayResetLabel ?? null}
+                  tooltip={
+                    isCodex
+                      ? `${(100 - metrics.rateLimit.sevenDayPercent).toFixed(1)}% left`
+                      : `${metrics.rateLimit.sevenDayPercent.toFixed(1)}% used`
+                  }
                   glow
                 />
               </>
@@ -254,35 +283,48 @@ function ProgressRow({
   label,
   percent,
   resetSeconds,
+  resetLabel,
+  valueLabel,
   tooltip,
   glow,
 }: {
   label: string;
   percent: number;
   resetSeconds?: number;
+  resetLabel?: string | null;
+  valueLabel?: string;
   tooltip?: string;
   glow?: boolean;
 }) {
+  const clampedPercent = Math.min(Math.max(percent, 0), 100);
+  const shownValue = valueLabel ?? `${Math.round(clampedPercent)}%`;
+
   return (
-    <div className="flex items-center gap-2 text-xs" title={tooltip}>
-      <span className="w-14 text-zinc-500">{label}</span>
-      <span className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-700">
-        <motion.span
-          className="absolute inset-y-0 left-0 rounded-full"
-          animate={{
-            width: `${Math.min(percent, 100)}%`,
-            backgroundColor: progressColor(percent),
-          }}
-          transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        />
-        {glow && percent >= 80 ? (
-          <span className="absolute inset-0 animate-pulse rounded-full bg-red-500/20" />
+    <div className="rounded border border-zinc-800/80 bg-zinc-950/40 px-2 py-1.5" title={tooltip}>
+      <div className="mb-1 flex items-center justify-between text-[11px]">
+        <span className="font-medium text-zinc-300">{label}</span>
+        <span className="text-zinc-200">{shownValue}</span>
+      </div>
+      <div className="flex items-center gap-2 text-xs">
+        <span className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-700">
+          <motion.span
+            className="absolute inset-y-0 left-0 rounded-full"
+            animate={{
+              width: `${clampedPercent}%`,
+              backgroundColor: progressColor(percent),
+            }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+          />
+          {glow && percent >= 80 ? (
+            <span className="absolute inset-0 animate-pulse rounded-full bg-red-500/20" />
+          ) : null}
+        </span>
+        {resetLabel ? (
+          <span className="text-zinc-500">↻ {resetLabel}</span>
+        ) : resetSeconds != null && resetSeconds > 0 ? (
+          <span className="text-zinc-500">↻ {formatResetTime(resetSeconds)}</span>
         ) : null}
-      </span>
-      <span className="w-8 text-right text-zinc-400">{Math.round(percent)}%</span>
-      {resetSeconds != null && resetSeconds > 0 ? (
-        <span className="text-zinc-500">↻ {formatResetTime(resetSeconds)}</span>
-      ) : null}
+      </div>
     </div>
   );
 }

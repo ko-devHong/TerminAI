@@ -122,6 +122,11 @@ export function TerminalView({ tabId }: TerminalViewProps) {
       upgradeToIMEInput(tabId, handleInput);
     }
 
+    // Keep keyboard focus in terminal so Enter/typing goes to PTY, not sidebar controls.
+    window.requestAnimationFrame(() => {
+      cached.terminal.focus();
+    });
+
     function onResize() {
       cached.fitAddon.fit();
       if (cached.sessionId) {
@@ -201,6 +206,10 @@ export function TerminalView({ tabId }: TerminalViewProps) {
           rows: cached.terminal.rows,
         });
 
+        window.requestAnimationFrame(() => {
+          cached.terminal.focus();
+        });
+
         // Setup Claude Code statusline JSON file if applicable
         if (activeTab.provider === "claude-code") {
           invokeTauri("setup_claude_statusline").catch(() => {});
@@ -265,6 +274,11 @@ export function TerminalView({ tabId }: TerminalViewProps) {
       if (!currentTab) return;
 
       const existing = store.get(hudMetricsAtom(sessionId));
+      const resolvedStatus =
+        (update.status as ProcessStatus | null) ??
+        existing?.detailedStatus ??
+        currentTab.processStatus ??
+        "idle";
       const merged: HUDMetrics = {
         provider: currentTab.provider,
         model: update.model ?? existing?.model ?? null,
@@ -285,15 +299,22 @@ export function TerminalView({ tabId }: TerminalViewProps) {
         plan: existing?.plan ?? null,
         hasCredentials: existing?.hasCredentials ?? false,
         activeTools: update.activeTools.length ? update.activeTools : (existing?.activeTools ?? []),
-        sessionDuration: existing?.sessionDuration ?? 0,
-        detailedStatus: (update.status as ProcessStatus) ?? existing?.detailedStatus ?? "idle",
-        connectionStatus: "connected",
+        sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
+        detailedStatus: resolvedStatus,
+        connectionStatus:
+          resolvedStatus === "error" || resolvedStatus === "disconnected"
+            ? "error"
+            : resolvedStatus === "idle"
+              ? "disconnected"
+              : "connected",
         rateLimitCountdown:
           update.rateLimitSeconds != null
             ? update.rateLimitSeconds
             : (existing?.rateLimitCountdown ?? null),
         rateLimitDetectedAt:
           update.rateLimitSeconds != null ? Date.now() : (existing?.rateLimitDetectedAt ?? null),
+        rateLimitFiveHourResetLabel: existing?.rateLimitFiveHourResetLabel ?? null,
+        rateLimitSevenDayResetLabel: existing?.rateLimitSevenDayResetLabel ?? null,
       };
       store.set(hudMetricsAtom(sessionId), merged);
     },
@@ -316,6 +337,16 @@ export function TerminalView({ tabId }: TerminalViewProps) {
       const screenData = extractScreenMetrics(cached.terminal, currentTab.provider);
 
       const existing = store.get(hudMetricsAtom(sessionId));
+      const statusFromScreen = screenData.detectedStatus;
+      const preserveLiveStatus =
+        statusFromScreen === "idle" &&
+        (currentTab.processStatus === "running" ||
+          currentTab.processStatus === "thinking" ||
+          currentTab.processStatus === "waiting" ||
+          currentTab.processStatus === "stale");
+      const resolvedStatus = preserveLiveStatus
+        ? currentTab.processStatus
+        : (statusFromScreen ?? existing?.detailedStatus ?? currentTab.processStatus ?? "idle");
       const merged: HUDMetrics = {
         provider: currentTab.provider,
         model: screenData.model ?? existing?.model ?? null,
@@ -331,18 +362,47 @@ export function TerminalView({ tabId }: TerminalViewProps) {
               }
             : (existing?.tokens ?? null),
         cost: screenData.cost ?? existing?.cost ?? null,
-        rateLimit: existing?.rateLimit ?? null,
+        rateLimit:
+          screenData.rateFiveHourLeft != null || screenData.rateSevenDayLeft != null
+            ? {
+                fiveHourPercent:
+                  screenData.rateFiveHourLeft != null
+                    ? 100 - screenData.rateFiveHourLeft
+                    : (existing?.rateLimit?.fiveHourPercent ?? 0),
+                sevenDayPercent:
+                  screenData.rateSevenDayLeft != null
+                    ? 100 - screenData.rateSevenDayLeft
+                    : (existing?.rateLimit?.sevenDayPercent ?? 0),
+                fiveHourResetSeconds:
+                  screenData.rateFiveHourResetSeconds ??
+                  existing?.rateLimit?.fiveHourResetSeconds ??
+                  0,
+                sevenDayResetSeconds:
+                  screenData.rateSevenDayResetSeconds ??
+                  existing?.rateLimit?.sevenDayResetSeconds ??
+                  0,
+              }
+            : (existing?.rateLimit ?? null),
         billing: existing?.billing ?? null,
         plan: existing?.plan ?? null,
         hasCredentials: existing?.hasCredentials ?? false,
         activeTools: screenData.activeTools.length
           ? screenData.activeTools
           : (existing?.activeTools ?? []),
-        sessionDuration: existing?.sessionDuration ?? 0,
-        detailedStatus: screenData.detectedStatus ?? existing?.detailedStatus ?? "idle",
-        connectionStatus: "connected",
+        sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
+        detailedStatus: resolvedStatus,
+        connectionStatus:
+          resolvedStatus === "error" || resolvedStatus === "disconnected"
+            ? "error"
+            : resolvedStatus === "idle"
+              ? "disconnected"
+              : "connected",
         rateLimitCountdown: existing?.rateLimitCountdown ?? null,
         rateLimitDetectedAt: existing?.rateLimitDetectedAt ?? null,
+        rateLimitFiveHourResetLabel:
+          screenData.rateFiveHourResetLabel ?? existing?.rateLimitFiveHourResetLabel ?? null,
+        rateLimitSevenDayResetLabel:
+          screenData.rateSevenDayResetLabel ?? existing?.rateLimitSevenDayResetLabel ?? null,
       };
 
       store.set(hudMetricsAtom(sessionId), merged);
