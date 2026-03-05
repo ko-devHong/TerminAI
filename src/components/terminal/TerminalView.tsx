@@ -1,11 +1,11 @@
 import { useAtomValue, useStore } from "jotai";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { hudMetricsAtom } from "@/atoms/hud";
 import { terminalFontSizeAtom } from "@/atoms/settings";
 import { tabAtom } from "@/atoms/spaces";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
-import { extractScreenMetrics } from "@/lib/screen-metrics";
+import { mergeIntoHudMetrics } from "@/lib/hud-merge";
 import { invokeTauri, isTauriRuntimeAvailable } from "@/lib/tauri";
 import {
   getOrCreateTerminal,
@@ -24,8 +24,12 @@ import type {
 
 import "@xterm/xterm/css/xterm.css";
 
+import { TerminalSearchBar } from "./TerminalSearchBar";
+
 interface TerminalViewProps {
   tabId: string | null;
+  searchOpen?: boolean;
+  onSearchClose?: () => void;
 }
 
 const GEMINI_SPINNER_LINE_PATTERN = /^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+.*\(esc to cancel,\s*\d+s\).*$/u;
@@ -94,13 +98,20 @@ function sanitizeTerminalOutput(payload: string, provider: AIProvider): string {
   return keptLines.join("\n");
 }
 
-export function TerminalView({ tabId }: TerminalViewProps) {
+const spawningTabs = new Set<string>();
+
+export function TerminalView({ tabId, searchOpen = false, onSearchClose }: TerminalViewProps) {
   const tab = useAtomValue(tabAtom(tabId ?? "__none__"));
   const store = useStore();
   const fontSize = useAtomValue(terminalFontSizeAtom);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeTabIdRef = useRef<string | null>(null);
+  const lastActivityUpdateRef = useRef<number>(0);
+  const [internalSearchOpen, setInternalSearchOpen] = useState(false);
+
+  const isSearchOpen = searchOpen || internalSearchOpen;
+  const handleSearchClose = onSearchClose ?? (() => setInternalSearchOpen(false));
 
   const setTabSessionAndStatus = useCallback(
     (targetTabId: string, nextSessionId: string | null, nextStatus: ProcessStatus) => {
@@ -160,7 +171,9 @@ export function TerminalView({ tabId }: TerminalViewProps) {
 
     // Attach to DOM
     if (cached.terminal.element) {
-      container.appendChild(cached.terminal.element);
+      if (cached.terminal.element.parentElement !== container) {
+        container.appendChild(cached.terminal.element);
+      }
       cached.fitAddon.fit();
     } else {
       cached.terminal.open(container);
@@ -192,9 +205,17 @@ export function TerminalView({ tabId }: TerminalViewProps) {
     };
   }, [tabId, fontSize, handleInput]);
 
+  // Extract only the tab properties ensureSession depends on, so that
+  // unrelated tab updates (lastActivityAt, isFocused, etc.) don't re-trigger
+  // session spawning.
+  const tabSessionId = tab?.sessionId ?? null;
+  const tabProcessStatus = tab?.processStatus ?? null;
+  const tabProvider = tab?.provider ?? null;
+  const tabCwd = tab?.cwd ?? null;
+
   // Session management: spawn or attach session for current tab
   useEffect(() => {
-    if (!tabId || !tab) {
+    if (!tabId || !tabProvider) {
       return;
     }
 
@@ -204,43 +225,53 @@ export function TerminalView({ tabId }: TerminalViewProps) {
       return;
     }
 
-    const activeTab = tab;
-    const existingSessionId = activeTab.sessionId;
-
     async function ensureSession(): Promise<void> {
       if (!cached) return;
 
       if (!isTauriRuntimeAvailable()) {
         if (!cached.sessionId) {
-          cached.terminal.writeln(`[${activeTab.provider}] Tauri runtime unavailable in web mode.`);
+          cached.terminal.writeln(`[${tabProvider}] Tauri runtime unavailable in web mode.`);
           cached.terminal.writeln("Run `bun run tauri dev` to spawn real PTY sessions.");
         }
         return;
       }
 
-      if (existingSessionId) {
-        if (cached.sessionId === existingSessionId) {
-          return;
+      if (tabSessionId) {
+        if (cached.sessionId !== tabSessionId) {
+          cached.sessionId = tabSessionId;
         }
-        cached.sessionId = existingSessionId;
+        // Always fit and focus when attaching/matching
+        cached.fitAddon.fit();
+        window.requestAnimationFrame(() => {
+          cached.terminal.focus();
+        });
         return;
       }
 
       if (cached.sessionId) {
+        // We have a local session but the atom doesn't know about it.
+        // Sync atom with local state.
+        setTabSessionAndStatus(currentTabId, cached.sessionId, "running");
         return;
       }
 
       // Only auto-spawn for fresh tabs; don't retry after disconnect/error
-      if (activeTab.processStatus !== "idle") {
+      if (tabProcessStatus !== "idle") {
         return;
       }
 
-      cached.terminal.writeln(`[${activeTab.provider}] spawning session...`);
+      // Prevent concurrent spawn attempts (global check)
+      if (spawningTabs.has(currentTabId)) {
+        return;
+      }
+      spawningTabs.add(currentTabId);
+
+      cached.terminal.writeln(`[${tabProvider}] spawning session...`);
 
       try {
         const spawnedSessionId = await invokeTauri<string>("spawn_session", {
-          provider: activeTab.provider,
-          cwd: activeTab.cwd,
+          provider: tabProvider,
+          cwd: tabCwd ?? ".",
         });
 
         cached.sessionId = spawnedSessionId;
@@ -258,7 +289,7 @@ export function TerminalView({ tabId }: TerminalViewProps) {
         });
 
         // Setup Claude Code statusline JSON file if applicable
-        if (activeTab.provider === "claude-code") {
+        if (tabProvider === "claude-code") {
           invokeTauri("setup_claude_statusline").catch(() => {});
         }
       } catch (error) {
@@ -266,11 +297,13 @@ export function TerminalView({ tabId }: TerminalViewProps) {
         cached.terminal.writeln(`Failed to spawn session: ${message}`);
         cached.sessionId = null;
         setTabSessionAndStatus(currentTabId, null, "error");
+      } finally {
+        spawningTabs.delete(currentTabId);
       }
     }
 
     void ensureSession();
-  }, [setTabSessionAndStatus, tab, tabId]);
+  }, [setTabSessionAndStatus, tabId, tabSessionId, tabProcessStatus, tabProvider, tabCwd]);
 
   const sessionId = tab?.sessionId ?? null;
 
@@ -279,7 +312,7 @@ export function TerminalView({ tabId }: TerminalViewProps) {
       !tabId ||
       !sessionId ||
       !tab ||
-      tab.provider !== "codex-cli" ||
+      (tab.provider !== "codex-cli" && tab.provider !== "gemini-cli") ||
       !isTauriRuntimeAvailable()
     ) {
       return;
@@ -388,16 +421,12 @@ export function TerminalView({ tabId }: TerminalViewProps) {
           const existing = store.get(hudMetricsAtom(currentTab.sessionId));
           const fiveLeft = five ? Number.parseInt(five[1], 10) : Number.NaN;
           const sevenLeft = seven ? Number.parseInt(seven[1], 10) : Number.NaN;
-          const fiveResetLabel = five?.[2]?.trim() ?? existing?.rateLimitFiveHourResetLabel ?? null;
-          const sevenResetLabel =
-            seven?.[2]?.trim() ?? existing?.rateLimitSevenDayResetLabel ?? null;
+          const fiveResetLabel = five?.[2]?.trim() ?? null;
+          const sevenResetLabel = seven?.[2]?.trim() ?? null;
 
-          store.set(hudMetricsAtom(currentTab.sessionId), {
+          const partial: Partial<HUDMetrics> = {
             provider: currentTab.provider,
-            model: existing?.model ?? null,
-            contextWindow: existing?.contextWindow ?? null,
-            tokens: existing?.tokens ?? null,
-            cost: existing?.cost ?? null,
+            sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
             rateLimit: {
               fiveHourPercent: Number.isNaN(fiveLeft)
                 ? (existing?.rateLimit?.fiveHourPercent ?? 0)
@@ -418,18 +447,39 @@ export function TerminalView({ tabId }: TerminalViewProps) {
                     0)
                   : (existing?.rateLimit?.sevenDayResetSeconds ?? 0),
             },
-            billing: existing?.billing ?? null,
-            plan: existing?.plan ?? null,
-            hasCredentials: existing?.hasCredentials ?? false,
-            activeTools: existing?.activeTools ?? [],
-            sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
-            detailedStatus: existing?.detailedStatus ?? currentTab.processStatus,
-            connectionStatus: existing?.connectionStatus ?? "connected",
-            rateLimitCountdown: existing?.rateLimitCountdown ?? null,
-            rateLimitDetectedAt: existing?.rateLimitDetectedAt ?? null,
-            rateLimitFiveHourResetLabel: fiveResetLabel,
-            rateLimitSevenDayResetLabel: sevenResetLabel,
-          });
+            rateLimitFiveHourResetLabel: fiveResetLabel ?? undefined,
+            rateLimitSevenDayResetLabel: sevenResetLabel ?? undefined,
+          };
+
+          const base: HUDMetrics = existing ?? {
+            provider: currentTab.provider,
+            model: null,
+            contextWindow: null,
+            tokens: null,
+            cost: null,
+            rateLimit: null,
+            billing: null,
+            plan: null,
+            hasCredentials: false,
+            activeTools: [],
+            sessionDuration: 0,
+            detailedStatus: currentTab.processStatus,
+            connectionStatus: "connected",
+            rateLimitCountdown: null,
+            rateLimitDetectedAt: null,
+            rateLimitFiveHourResetLabel: null,
+            rateLimitSevenDayResetLabel: null,
+          };
+
+          store.set(
+            hudMetricsAtom(currentTab.sessionId),
+            mergeIntoHudMetrics(
+              base,
+              partial,
+              "handleOutput",
+              existing?._lastSource as import("@/lib/hud-merge").MetricSource | null | undefined,
+            ),
+          );
         }
       }
 
@@ -466,12 +516,9 @@ export function TerminalView({ tabId }: TerminalViewProps) {
             }
           }
 
-          store.set(hudMetricsAtom(currentTab.sessionId), {
+          const partial: Partial<HUDMetrics> = {
             provider: currentTab.provider,
-            model: existing?.model ?? null,
-            contextWindow: existing?.contextWindow ?? null,
-            tokens: existing?.tokens ?? null,
-            cost: existing?.cost ?? null,
+            sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
             rateLimit: {
               fiveHourPercent:
                 shortLeft == null
@@ -484,28 +531,56 @@ export function TerminalView({ tabId }: TerminalViewProps) {
               fiveHourResetSeconds: existing?.rateLimit?.fiveHourResetSeconds ?? 0,
               sevenDayResetSeconds: existing?.rateLimit?.sevenDayResetSeconds ?? 0,
             },
-            billing: existing?.billing ?? null,
-            plan: existing?.plan ?? null,
-            hasCredentials: existing?.hasCredentials ?? false,
-            activeTools: existing?.activeTools ?? [],
-            sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
-            detailedStatus: existing?.detailedStatus ?? currentTab.processStatus,
-            connectionStatus: existing?.connectionStatus ?? "connected",
-            rateLimitCountdown: existing?.rateLimitCountdown ?? null,
-            rateLimitDetectedAt: existing?.rateLimitDetectedAt ?? null,
-            rateLimitFiveHourResetLabel:
-              shortResetLabel ?? existing?.rateLimitFiveHourResetLabel ?? null,
-            rateLimitSevenDayResetLabel:
-              longResetLabel ?? existing?.rateLimitSevenDayResetLabel ?? null,
-          });
+            rateLimitFiveHourResetLabel: shortResetLabel ?? undefined,
+            rateLimitSevenDayResetLabel: longResetLabel ?? undefined,
+          };
+
+          const base: HUDMetrics = existing ?? {
+            provider: currentTab.provider,
+            model: null,
+            contextWindow: null,
+            tokens: null,
+            cost: null,
+            rateLimit: null,
+            billing: null,
+            plan: null,
+            hasCredentials: false,
+            activeTools: [],
+            sessionDuration: 0,
+            detailedStatus: currentTab.processStatus,
+            connectionStatus: "connected",
+            rateLimitCountdown: null,
+            rateLimitDetectedAt: null,
+            rateLimitFiveHourResetLabel: null,
+            rateLimitSevenDayResetLabel: null,
+          };
+
+          store.set(
+            hudMetricsAtom(currentTab.sessionId),
+            mergeIntoHudMetrics(
+              base,
+              partial,
+              "handleOutput",
+              existing?._lastSource as import("@/lib/hud-merge").MetricSource | null | undefined,
+            ),
+          );
         }
       }
 
-      store.set(tabAtom(tabId), {
-        ...currentTab,
-        processStatus: "running",
-        lastActivityAt: Date.now(),
-      });
+      // Only update tab activity/status if we still have a live session.
+      // We throttle these updates to avoid excessive re-renders during high-volume output.
+      const now = Date.now();
+      const shouldUpdateStatus = currentTab.processStatus !== "running";
+      const shouldUpdateActivity = now - lastActivityUpdateRef.current > 2000;
+
+      if (currentTab.sessionId && (shouldUpdateStatus || shouldUpdateActivity)) {
+        lastActivityUpdateRef.current = now;
+        store.set(tabAtom(tabId), {
+          ...currentTab,
+          processStatus: "running",
+          lastActivityAt: now,
+        });
+      }
     },
     [store, tabId],
   );
@@ -532,31 +607,37 @@ export function TerminalView({ tabId }: TerminalViewProps) {
       if (!currentTab) return;
 
       const existing = store.get(hudMetricsAtom(sessionId));
+      const source =
+        (update.source as import("@/lib/hud-merge").MetricSource | null | undefined) ??
+        "statusline";
+
+      // If statusline sends data without explicit status, the CLI is actively
+      // outputting → treat as "running". This prevents "thinking" from sticking
+      // after the AI finishes its response.
       const resolvedStatus =
         (update.status as ProcessStatus | null) ??
+        (source === "statusline" ? "running" : null) ??
         existing?.detailedStatus ??
         currentTab.processStatus ??
         "idle";
-      const merged: HUDMetrics = {
+
+      const partial: Partial<HUDMetrics> = {
         provider: currentTab.provider,
-        model: update.model ?? existing?.model ?? null,
+        model: update.model ?? undefined,
         contextWindow:
           update.contextUsed != null && update.contextTotal != null
             ? { used: update.contextUsed, total: update.contextTotal }
-            : (existing?.contextWindow ?? null),
+            : undefined,
         tokens:
           update.tokensIn != null || update.tokensOut != null
             ? {
                 input: update.tokensIn ?? existing?.tokens?.input ?? 0,
                 output: update.tokensOut ?? existing?.tokens?.output ?? 0,
               }
-            : (existing?.tokens ?? null),
-        cost: update.cost ?? existing?.cost ?? null,
-        rateLimit: existing?.rateLimit ?? null,
-        billing: existing?.billing ?? null,
-        plan: existing?.plan ?? null,
-        hasCredentials: existing?.hasCredentials ?? false,
-        activeTools: update.activeTools.length ? update.activeTools : (existing?.activeTools ?? []),
+            : undefined,
+        cost: update.cost ?? undefined,
+        rateLimit: existing?.rateLimit ?? undefined,
+        activeTools: update.activeTools.length ? update.activeTools : undefined,
         sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
         detailedStatus: resolvedStatus,
         connectionStatus:
@@ -568,119 +649,56 @@ export function TerminalView({ tabId }: TerminalViewProps) {
         rateLimitCountdown:
           update.rateLimitSeconds != null
             ? update.rateLimitSeconds
-            : (existing?.rateLimitCountdown ?? null),
+            : (existing?.rateLimitCountdown ?? undefined),
         rateLimitDetectedAt:
-          update.rateLimitSeconds != null ? Date.now() : (existing?.rateLimitDetectedAt ?? null),
-        rateLimitFiveHourResetLabel: existing?.rateLimitFiveHourResetLabel ?? null,
-        rateLimitSevenDayResetLabel: existing?.rateLimitSevenDayResetLabel ?? null,
+          update.rateLimitSeconds != null
+            ? Date.now()
+            : (existing?.rateLimitDetectedAt ?? undefined),
       };
+
+      const base: HUDMetrics = existing ?? {
+        provider: currentTab.provider,
+        model: null,
+        contextWindow: null,
+        tokens: null,
+        cost: null,
+        rateLimit: null,
+        billing: null,
+        plan: null,
+        hasCredentials: false,
+        activeTools: [],
+        sessionDuration: 0,
+        detailedStatus: currentTab.processStatus,
+        connectionStatus: "connected",
+        rateLimitCountdown: null,
+        rateLimitDetectedAt: null,
+        rateLimitFiveHourResetLabel: null,
+        rateLimitSevenDayResetLabel: null,
+      };
+
+      const merged = mergeIntoHudMetrics(
+        base,
+        partial,
+        source,
+        existing?._lastSource as import("@/lib/hud-merge").MetricSource | null | undefined,
+      );
       store.set(hudMetricsAtom(sessionId), merged);
     },
     [store, tabId, sessionId],
   );
-
-  // Periodically scan xterm.js rendered buffer for metrics
-  useEffect(() => {
-    if (!tabId || !sessionId) {
-      return;
-    }
-
-    function scanScreen() {
-      if (!tabId || !sessionId) return;
-
-      const cached = terminalCacheMap.get(tabId);
-      const currentTab = store.get(tabAtom(tabId));
-      if (!cached || !currentTab) return;
-
-      const screenData = extractScreenMetrics(cached.terminal, currentTab.provider);
-
-      const existing = store.get(hudMetricsAtom(sessionId));
-      const statusFromScreen = screenData.detectedStatus;
-      const preserveLiveStatus =
-        statusFromScreen === "idle" &&
-        (currentTab.processStatus === "running" ||
-          currentTab.processStatus === "thinking" ||
-          currentTab.processStatus === "waiting" ||
-          currentTab.processStatus === "stale");
-      const resolvedStatus = preserveLiveStatus
-        ? currentTab.processStatus
-        : (statusFromScreen ?? existing?.detailedStatus ?? currentTab.processStatus ?? "idle");
-      const merged: HUDMetrics = {
-        provider: currentTab.provider,
-        model: screenData.model ?? existing?.model ?? null,
-        contextWindow:
-          screenData.contextUsed != null && screenData.contextTotal != null
-            ? { used: screenData.contextUsed, total: screenData.contextTotal }
-            : (existing?.contextWindow ?? null),
-        tokens:
-          screenData.tokensIn != null || screenData.tokensOut != null
-            ? {
-                input: screenData.tokensIn ?? existing?.tokens?.input ?? 0,
-                output: screenData.tokensOut ?? existing?.tokens?.output ?? 0,
-              }
-            : (existing?.tokens ?? null),
-        cost: screenData.cost ?? existing?.cost ?? null,
-        rateLimit:
-          screenData.rateFiveHourLeft != null || screenData.rateSevenDayLeft != null
-            ? {
-                fiveHourPercent:
-                  screenData.rateFiveHourLeft != null
-                    ? 100 - screenData.rateFiveHourLeft
-                    : (existing?.rateLimit?.fiveHourPercent ?? 0),
-                sevenDayPercent:
-                  screenData.rateSevenDayLeft != null
-                    ? 100 - screenData.rateSevenDayLeft
-                    : (existing?.rateLimit?.sevenDayPercent ?? 0),
-                fiveHourResetSeconds:
-                  screenData.rateFiveHourResetSeconds ??
-                  existing?.rateLimit?.fiveHourResetSeconds ??
-                  0,
-                sevenDayResetSeconds:
-                  screenData.rateSevenDayResetSeconds ??
-                  existing?.rateLimit?.sevenDayResetSeconds ??
-                  0,
-              }
-            : (existing?.rateLimit ?? null),
-        billing: existing?.billing ?? null,
-        plan: existing?.plan ?? null,
-        hasCredentials: existing?.hasCredentials ?? false,
-        activeTools: screenData.activeTools.length
-          ? screenData.activeTools
-          : (existing?.activeTools ?? []),
-        sessionDuration: Math.max(0, Math.floor((Date.now() - currentTab.createdAt) / 1000)),
-        detailedStatus: resolvedStatus,
-        connectionStatus:
-          resolvedStatus === "error" || resolvedStatus === "disconnected"
-            ? "error"
-            : resolvedStatus === "idle"
-              ? "disconnected"
-              : "connected",
-        rateLimitCountdown: existing?.rateLimitCountdown ?? null,
-        rateLimitDetectedAt: existing?.rateLimitDetectedAt ?? null,
-        rateLimitFiveHourResetLabel:
-          screenData.rateFiveHourResetLabel ?? existing?.rateLimitFiveHourResetLabel ?? null,
-        rateLimitSevenDayResetLabel:
-          screenData.rateSevenDayResetLabel ?? existing?.rateLimitSevenDayResetLabel ?? null,
-      };
-
-      store.set(hudMetricsAtom(sessionId), merged);
-    }
-
-    // Scan immediately, then every 3 seconds
-    scanScreen();
-    const interval = window.setInterval(scanScreen, 3_000);
-    return () => window.clearInterval(interval);
-  }, [tabId, sessionId, store]);
 
   useTauriEvent<string>(sessionId ? `pty-output-${sessionId}` : null, handleOutput);
   useTauriEvent<ProcessStatus>(sessionId ? `session-status-${sessionId}` : null, handleStatus);
   useTauriEvent<MetricUpdate>(sessionId ? `metrics-${sessionId}` : null, handleMetrics);
 
   return (
-    <div
-      ref={containerRef}
-      className="h-full w-full"
-      style={{ background: "var(--color-background)" }}
-    />
+    <div className="relative h-full w-full">
+      <div
+        ref={containerRef}
+        className="h-full w-full"
+        style={{ background: "var(--color-background)" }}
+      />
+      <TerminalSearchBar tabId={tabId} open={isSearchOpen} onClose={handleSearchClose} />
+    </div>
   );
 }

@@ -14,6 +14,9 @@ pub struct MetricUpdate {
     pub context_total: Option<u64>,
     pub status: Option<String>,
     pub rate_limit_seconds: Option<u64>,
+    pub source: Option<String>,
+    pub active_agents: Vec<String>,
+    pub pending_permissions: Option<bool>,
 }
 
 impl MetricUpdate {
@@ -28,6 +31,9 @@ impl MetricUpdate {
             context_total: None,
             status: None,
             rate_limit_seconds: None,
+            source: None,
+            active_agents: Vec::new(),
+            pending_permissions: None,
         }
     }
 }
@@ -299,7 +305,7 @@ impl MetricParser for ClaudeMetricParser {
         if changed {
             update.active_tools.clone_from(&self.active_tools);
             update.model.clone_from(&self.last_model);
-            update.cost = Some(self.cumulative_cost);
+            update.cost = if self.cumulative_cost > 0.0 { Some(self.cumulative_cost) } else { None };
             update.tokens_in = self.tokens_in;
             update.tokens_out = self.tokens_out;
             update.context_used = self.context_used;
@@ -410,7 +416,7 @@ impl MetricParser for CodexMetricParser {
         if changed {
             update.active_tools.clone_from(&self.active_tools);
             update.model.clone_from(&self.last_model);
-            update.cost = Some(self.cumulative_cost);
+            update.cost = if self.cumulative_cost > 0.0 { Some(self.cumulative_cost) } else { None };
             update.tokens_in = self.tokens_in;
             update.tokens_out = self.tokens_out;
             update.context_used = self.context_used;
@@ -511,7 +517,7 @@ impl MetricParser for GeminiMetricParser {
         if changed {
             update.active_tools.clone_from(&self.active_tools);
             update.model.clone_from(&self.last_model);
-            update.cost = Some(self.cumulative_cost);
+            update.cost = if self.cumulative_cost > 0.0 { Some(self.cumulative_cost) } else { None };
             update.tokens_in = self.tokens_in;
             update.tokens_out = self.tokens_out;
             update.context_used = self.context_used;

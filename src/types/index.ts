@@ -82,6 +82,11 @@ export interface HUDMetrics {
   rateLimitDetectedAt: number | null;
   rateLimitFiveHourResetLabel: string | null;
   rateLimitSevenDayResetLabel: string | null;
+  _lastSource?: string | null;
+  omcMode?: string | null;
+  omcPhase?: string | null;
+  omcIteration?: number | null;
+  gitBranch?: string | null;
 }
 
 export interface MetricUpdate {
@@ -94,6 +99,9 @@ export interface MetricUpdate {
   contextTotal: number | null;
   status: string | null;
   rateLimitSeconds: number | null;
+  source?: string | null;
+  activeAgents?: string[];
+  pendingPermissions?: boolean;
 }
 
 export interface CliQuotaSnapshot {

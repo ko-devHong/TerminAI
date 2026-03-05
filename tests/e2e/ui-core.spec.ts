@@ -2,7 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 
 async function resetLocalStorage(page: Page) {
   await page.goto("/");
-  await page.evaluate(() => window.localStorage.clear());
+  await page.evaluate(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem("terminai:onboarding-complete", "true");
+  });
   await page.reload();
 }
 

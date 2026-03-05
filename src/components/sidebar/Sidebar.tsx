@@ -9,7 +9,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { useAtomValue, useSetAtom } from "jotai";
-import { FolderCog, Search } from "lucide-react";
+import { FolderCog, RotateCcw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { sidebarCollapsedAtom, sidebarWidthAtom } from "@/atoms/settings";
@@ -25,12 +25,14 @@ const MAX_SIDEBAR_WIDTH = 360;
 interface SidebarProps {
   onOpenCommandPalette?: () => void;
   onOpenDefaultPathDialog?: () => void;
+  onResetApp?: () => void;
   defaultCwd?: string;
 }
 
 export function Sidebar({
   onOpenCommandPalette,
   onOpenDefaultPathDialog,
+  onResetApp,
   defaultCwd,
 }: SidebarProps) {
   const pointerSensor = useSensor(PointerSensor, {
@@ -181,6 +183,15 @@ export function Sidebar({
           >
             <FolderCog className="size-3" />
             <span className="truncate">Default Path: {defaultCwd ?? "."}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onResetApp}
+            className="flex h-8 items-center gap-2 rounded-md border border-zinc-800 px-2 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+          >
+            <RotateCcw className="size-3" />
+            <span>Re-run Setup</span>
           </button>
 
           <ScrollArea className="h-full">

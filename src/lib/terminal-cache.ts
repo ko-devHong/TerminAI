@@ -1,9 +1,11 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import { Terminal } from "@xterm/xterm";
 
 export interface TerminalCache {
   terminal: Terminal;
   fitAddon: FitAddon;
+  searchAddon: SearchAddon;
   sessionId: string | null;
   dispose: () => void;
 }
@@ -103,6 +105,9 @@ export function getOrCreateTerminal(
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
 
+  const searchAddon = new SearchAddon();
+  terminal.loadAddon(searchAddon);
+
   // IME listeners will be attached after terminal.open() in TerminalView.
   // For now, use basic onData — it'll be replaced by attachIMEAwareInput.
   const onDataDisposable = terminal.onData((data) => {
@@ -112,6 +117,7 @@ export function getOrCreateTerminal(
   const cache: TerminalCache = {
     terminal,
     fitAddon,
+    searchAddon,
     sessionId: null,
     dispose: () => onDataDisposable.dispose(),
   };

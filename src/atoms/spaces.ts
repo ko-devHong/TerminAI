@@ -14,6 +14,15 @@ export const tabCwdsAtom = atomWithStorage<Record<string, string>>("terminai:tab
 
 export const tabAtom = atomFamily((_id: string) => atom<Tab | null>(null));
 
+interface TabMetadata {
+  name: string;
+  provider: AIProvider;
+}
+export const tabMetadataAtom = atomWithStorage<Record<string, TabMetadata>>(
+  "terminai:tab-metadata",
+  {},
+);
+
 export const focusedTabIdAtom = atomWithStorage<string | null>("terminai:focused-tab-id", null);
 
 export const favoriteTabIdsAtom = atomWithStorage<string[]>("terminai:favorite-tab-ids", []);
@@ -54,6 +63,7 @@ export const initializeWorkspaceAtom = atom(null, (get, set) => {
     let shouldPersistCwds = false;
     let hasFocused = false;
     const focusedTabId = get(focusedTabIdAtom);
+    const tabMetadata = get(tabMetadataAtom);
     const now = Date.now();
 
     for (const space of spaces) {
@@ -74,15 +84,19 @@ export const initializeWorkspaceAtom = atom(null, (get, set) => {
           continue;
         }
 
-        const provider: AIProvider = id.includes("gemini")
-          ? "gemini-cli"
-          : id.includes("codex")
-            ? "codex-cli"
-            : "claude-code";
+        const meta = tabMetadata[id];
+        const provider: AIProvider = meta
+          ? meta.provider
+          : id.includes("gemini")
+            ? "gemini-cli"
+            : id.includes("codex")
+              ? "codex-cli"
+              : "claude-code";
+        const name = meta ? meta.name : id.replace(/^tab-/, "");
 
         const fallback: Tab = {
           id,
-          name: id.replace(/^tab-/, ""),
+          name,
           provider,
           cwd: tabCwds[id] ?? ".",
           spaceId: space.id,
@@ -124,6 +138,12 @@ export const initializeWorkspaceAtom = atom(null, (get, set) => {
   set(favoriteTabIdsAtom, INITIAL_FAVORITE_TAB_IDS);
   set(focusedTabIdAtom, INITIAL_FOCUSED_TAB_ID);
   set(tabCwdsAtom, Object.fromEntries(INITIAL_TABS.map((tab) => [tab.id, tab.cwd || "."])));
+  set(
+    tabMetadataAtom,
+    Object.fromEntries(
+      INITIAL_TABS.map((tab) => [tab.id, { name: tab.name, provider: tab.provider }]),
+    ),
+  );
 
   for (const tab of INITIAL_TABS) {
     set(tabAtom(tab.id), tab);
@@ -208,6 +228,10 @@ export const createTabAtom = atom(null, (get, set, payload: CreateTabPayload) =>
 
   set(tabAtom(newTabId), nextTab);
   set(tabCwdsAtom, { ...get(tabCwdsAtom), [newTabId]: nextTab.cwd });
+  set(tabMetadataAtom, {
+    ...get(tabMetadataAtom),
+    [newTabId]: { name: nextTab.name, provider: nextTab.provider },
+  });
 
   const spaces = get(spacesAtom);
   set(
@@ -265,6 +289,8 @@ export const renameTabAtom = atom(null, (get, set, payload: { tabId: string; nam
   }
 
   set(tabAtom(payload.tabId), { ...tab, name: nextName });
+  const meta = get(tabMetadataAtom);
+  set(tabMetadataAtom, { ...meta, [payload.tabId]: { name: nextName, provider: tab.provider } });
 });
 
 export const setTabCwdAtom = atom(null, (get, set, payload: { tabId: string; cwd: string }) => {
@@ -313,6 +339,10 @@ export const duplicateTabAtom = atom(null, (get, set, tabId: string) => {
 
   set(tabAtom(newTabId), duplicated);
   set(tabCwdsAtom, { ...get(tabCwdsAtom), [newTabId]: duplicated.cwd });
+  set(tabMetadataAtom, {
+    ...get(tabMetadataAtom),
+    [newTabId]: { name: duplicated.name, provider: duplicated.provider },
+  });
 
   const spaces = get(spacesAtom);
   const nextSpaces = spaces.map((space) => {
@@ -359,6 +389,9 @@ export const closeTabAtom = atom(null, (get, set, tabId: string) => {
   const nextTabCwds = { ...get(tabCwdsAtom) };
   delete nextTabCwds[tabId];
   set(tabCwdsAtom, nextTabCwds);
+  const nextTabMetadata = { ...get(tabMetadataAtom) };
+  delete nextTabMetadata[tabId];
+  set(tabMetadataAtom, nextTabMetadata);
 
   if (focusedTabId !== tabId) {
     return;

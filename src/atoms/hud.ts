@@ -4,6 +4,12 @@ import { atomFamily, atomWithStorage } from "jotai/utils";
 import { focusedTabAtom } from "@/atoms/spaces";
 import type { AIProvider, HUDMetrics, ProcessStatus, ProviderUsage } from "@/types";
 
+export const omcStateAtom = atomFamily((_sessionId: string) =>
+  atom<{ activeMode?: string; phase?: string; iteration?: number } | null>(null),
+);
+
+export const gitBranchAtom = atomFamily((_sessionId: string) => atom<string | null>(null));
+
 export const hudExpandModeAtom = atomWithStorage<"compact" | "expanded" | "hidden">(
   "terminai:hud-mode",
   "compact",

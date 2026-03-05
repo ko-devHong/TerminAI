@@ -1,8 +1,10 @@
 mod commands;
+mod file_watcher;
 mod metrics;
 mod provider;
 mod state;
 mod statusline;
+mod transcript;
 mod usage;
 
 use crate::state::AppState;
@@ -21,6 +23,10 @@ pub fn run() {
             commands::fetch_provider_usage,
             commands::fetch_cli_quota,
             commands::setup_claude_statusline,
+            commands::setup_mcp_bridge,
+            commands::get_project_root,
+            commands::fetch_omc_state,
+            commands::fetch_git_branch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

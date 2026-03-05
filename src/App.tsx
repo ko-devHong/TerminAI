@@ -24,6 +24,7 @@ import {
   tabAtom,
 } from "@/atoms/spaces";
 import { HUDPanel } from "@/components/hud/HUDPanel";
+import { ProviderSetup, resetOnboarding, useOnboardingRequired } from "@/components/onboarding/ProviderSetup";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,9 +65,12 @@ function App() {
   const setTabCwd = useSetAtom(setTabCwdAtom);
   const focusTab = useSetAtom(focusTabAtom);
   const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isDefaultPathOpen, setIsDefaultPathOpen] = useState(false);
   const [defaultPathDraft, setDefaultPathDraft] = useState(defaultCwd);
   const [tabPathDraft, setTabPathDraft] = useState("");
+  const onboardingRequired = useOnboardingRequired();
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useStaleDetection();
 
@@ -94,11 +98,16 @@ function App() {
   }, [editingTab]);
 
   useEffect(() => {
-    const hasStoredDefaultPath = window.localStorage.getItem("terminai:default-cwd") !== null;
-    if (!hasStoredDefaultPath) {
-      setIsDefaultPathOpen(true);
+    if (onboardingRequired) {
+      setShowOnboarding(true);
+      setIsDefaultPathOpen(false);
+    } else {
+      const hasStoredDefaultPath = window.localStorage.getItem("terminai:default-cwd") !== null;
+      if (!hasStoredDefaultPath) {
+        setIsDefaultPathOpen(true);
+      }
     }
-  }, []);
+  }, [onboardingRequired]);
 
   const orderedTabs = useMemo(() => {
     const byId = new Map(allTabs.map((tab) => [tab.id, tab]));
@@ -141,7 +150,9 @@ function App() {
         return;
       }
 
-      if (editable) {
+      if (isMod && key === "f") {
+        event.preventDefault();
+        setIsSearchOpen((prev) => !prev);
         return;
       }
 
@@ -201,6 +212,11 @@ function App() {
         if (targetTabId) {
           focusTab(targetTabId);
         }
+        return;
+      }
+
+      if (editable) {
+        return;
       }
     }
 
@@ -226,22 +242,30 @@ function App() {
       <Sidebar
         onOpenCommandPalette={() => setIsCommandOpen(true)}
         onOpenDefaultPathDialog={() => setIsDefaultPathOpen(true)}
+        onResetApp={() => {
+          resetOnboarding();
+          setShowOnboarding(true);
+        }}
         defaultCwd={defaultCwd}
       />
 
       <section className="flex min-w-0 flex-1 flex-col">
         <div className="relative min-h-0 flex-1 border-b border-zinc-800">
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="popLayout">
             <motion.div
               key={focusedTabId ?? "empty"}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.1 }}
+              transition={{ duration: 0.05 }}
               className="absolute inset-0"
             >
               <Suspense fallback={<div className="h-full w-full bg-zinc-950" />}>
-                <LazyTerminalView tabId={focusedTabId} />
+                <LazyTerminalView
+                  tabId={focusedTabId}
+                  searchOpen={isSearchOpen}
+                  onSearchClose={() => setIsSearchOpen(false)}
+                />
               </Suspense>
             </motion.div>
           </AnimatePresence>
@@ -308,6 +332,15 @@ function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {showOnboarding && (
+        <ProviderSetup
+          onComplete={() => {
+            setShowOnboarding(false);
+            setDefaultPathDraft(defaultCwd);
+          }}
+        />
+      )}
 
       <Dialog open={isDefaultPathOpen} onOpenChange={setIsDefaultPathOpen}>
         <DialogContent className="border-zinc-800 bg-zinc-900 text-zinc-100">

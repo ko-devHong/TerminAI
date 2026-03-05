@@ -10,6 +10,9 @@ struct StatuslineJson {
     model: Option<StatuslineModel>,
     context_window: Option<StatuslineContext>,
     cost: Option<StatuslineCost>,
+    transcript_path: Option<String>,
+    #[allow(dead_code)]
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,6 +39,7 @@ pub struct StatuslineWatcher {
     sl_file_path: PathBuf,
     last_modified: Option<SystemTime>,
     last_content_hash: u64,
+    last_transcript_path: Option<String>,
 }
 
 impl StatuslineWatcher {
@@ -45,11 +49,18 @@ impl StatuslineWatcher {
             sl_file_path,
             last_modified: None,
             last_content_hash: 0,
+            last_transcript_path: None,
         }
     }
 
     pub fn sl_file_path(&self) -> &str {
         self.sl_file_path.to_str().unwrap_or("")
+    }
+
+    /// Returns the transcript path from the most recent statusline update, if any.
+    #[allow(dead_code)]
+    pub fn last_transcript_path(&self) -> Option<String> {
+        self.last_transcript_path.clone()
     }
 
     /// Poll the statusline file for changes.
@@ -78,6 +89,12 @@ impl StatuslineWatcher {
         self.last_content_hash = hash;
 
         let json: StatuslineJson = serde_json::from_str(&content).ok()?;
+
+        // Track transcript_path from the parsed JSON
+        if let Some(ref path) = json.transcript_path {
+            self.last_transcript_path = Some(path.clone());
+        }
+
         Some(to_metric_update(&json))
     }
 
@@ -131,6 +148,9 @@ fn to_metric_update(json: &StatuslineJson) -> MetricUpdate {
         context_total,
         status: None,
         rate_limit_seconds: None,
+        source: Some("statusline".to_string()),
+        active_agents: Vec::new(),
+        pending_permissions: None,
     }
 }
 
@@ -148,7 +168,9 @@ mod tests {
                 "total_input_tokens": 50000,
                 "total_output_tokens": 35000
             },
-            "cost": { "total_cost_usd": 1.23 }
+            "cost": { "total_cost_usd": 1.23 },
+            "transcript_path": "/tmp/transcript-abc.jsonl",
+            "session_id": "abc-123"
         }"#;
 
         let json: StatuslineJson = serde_json::from_str(json_str).unwrap();
@@ -160,6 +182,9 @@ mod tests {
         assert_eq!(update.tokens_in, Some(50000));
         assert_eq!(update.tokens_out, Some(35000));
         assert_eq!(update.cost, Some(1.23));
+        assert_eq!(update.source, Some("statusline".to_string()));
+        assert_eq!(json.transcript_path, Some("/tmp/transcript-abc.jsonl".to_string()));
+        assert_eq!(json.session_id, Some("abc-123".to_string()));
     }
 
     #[test]
@@ -170,6 +195,24 @@ mod tests {
 
         assert_eq!(update.model, None);
         assert_eq!(update.context_used, None);
+        assert_eq!(update.cost, None);
+        assert_eq!(update.source, Some("statusline".to_string()));
+    }
+
+    #[test]
+    fn parse_statusline_json_with_transcript_and_session() {
+        let json_str = r#"{
+            "transcript_path": "/home/user/.claude/transcripts/session-xyz.jsonl",
+            "session_id": "session-xyz"
+        }"#;
+
+        let json: StatuslineJson = serde_json::from_str(json_str).unwrap();
+        assert_eq!(json.transcript_path, Some("/home/user/.claude/transcripts/session-xyz.jsonl".to_string()));
+        assert_eq!(json.session_id, Some("session-xyz".to_string()));
+
+        let update = to_metric_update(&json);
+        assert_eq!(update.source, Some("statusline".to_string()));
+        assert_eq!(update.model, None);
         assert_eq!(update.cost, None);
     }
 }

@@ -3,8 +3,9 @@ import { AlertTriangle, Clock3, DollarSign, KeyRound } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 
-import { activeHudMetricsAtom, hudExpandModeAtom } from "@/atoms/hud";
+import { activeHudMetricsAtom, gitBranchAtom, hudExpandModeAtom, omcStateAtom } from "@/atoms/hud";
 import { focusedTabAtom } from "@/atoms/spaces";
+import { useOmcGitPolling } from "@/hooks/useOmcGitPolling";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useUsagePolling } from "@/hooks/useUsagePolling";
 import { PROVIDERS } from "@/lib/providers";
@@ -47,6 +48,11 @@ export function HUDPanel() {
 
   // Start usage polling for the active provider
   useUsagePolling(activeTab?.provider ?? null);
+
+  // OMC state + git branch polling (10s interval)
+  useOmcGitPolling(activeTab?.sessionId ?? null, activeTab?.cwd ?? null);
+  const omcState = useAtomValue(omcStateAtom(activeTab?.sessionId ?? ""));
+  const gitBranch = useAtomValue(gitBranchAtom(activeTab?.sessionId ?? ""));
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -100,9 +106,9 @@ export function HUDPanel() {
     <motion.button
       type="button"
       onClick={cycleMode}
-      layout
-      animate={{ height: mode === "compact" ? 36 : 148 }}
-      transition={{ type: "spring", stiffness: 500, damping: 30 }}
+      initial={false}
+      animate={{ height: mode === "compact" ? 36 : "auto" }}
+      transition={{ duration: 0.2, ease: "easeInOut" }}
       className={cn(
         "w-full overflow-hidden border-t border-zinc-800 bg-zinc-900 px-3 text-left transition-colors hover:bg-zinc-800/80",
       )}
@@ -118,6 +124,12 @@ export function HUDPanel() {
         ) : (
           <span className="font-medium">{activeTab?.provider ?? "No active tab"}</span>
         )}
+
+        {gitBranch ? (
+          <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+            {gitBranch}
+          </span>
+        ) : null}
 
         <span className="text-zinc-400">
           {metrics?.model ?? "-"}
@@ -154,14 +166,26 @@ export function HUDPanel() {
         {/* Status */}
         <StatusDot status={currentStatus} />
         <span className="text-zinc-400">{currentStatus}</span>
-        {isCodex && metrics?.rateLimit ? (
+        {omcState?.activeMode ? (
+          <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-300">
+            {omcState.activeMode}
+            {omcState.phase ? ` · ${omcState.phase}` : null}
+            {omcState.iteration != null ? ` #${omcState.iteration}` : null}
+          </span>
+        ) : null}
+        {metrics?.rateLimit ? (
           <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">
             5h {Math.round(100 - metrics.rateLimit.fiveHourPercent)}% left
           </span>
         ) : null}
-        {isCodex && metrics?.rateLimit ? (
+        {metrics?.rateLimit ? (
           <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">
             7d {Math.round(100 - metrics.rateLimit.sevenDayPercent)}% left
+          </span>
+        ) : null}
+        {metrics && !metrics.rateLimit && !metrics.hasCredentials ? (
+          <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
+            <KeyRound className="inline size-2.5" /> no credentials
           </span>
         ) : null}
         <RateLimitBadge

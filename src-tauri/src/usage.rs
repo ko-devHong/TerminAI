@@ -285,6 +285,7 @@ pub async fn fetch_claude_usage(credential: &Credential) -> Result<ProviderUsage
 
     // Prefer OAuth usage endpoint when OAuth credential is available.
     if working_credential.is_oauth {
+        eprintln!("[HUD] Fetching Claude OAuth usage (token len={})", working_credential.token.len());
         let response = client
             .get("https://api.anthropic.com/api/oauth/usage")
             .header("Authorization", format!("Bearer {}", working_credential.token))
@@ -292,7 +293,15 @@ pub async fn fetch_claude_usage(credential: &Credential) -> Result<ProviderUsage
             .await
             .map_err(|e| format!("anthropic oauth usage request failed: {e}"))?;
 
-        if response.status().is_success() {
+        let status = response.status();
+        if status.as_u16() == 429 {
+            eprintln!("[HUD] Claude OAuth usage API rate limited (429). Will back off.");
+            return Err("rate_limited".to_string());
+        }
+        if !status.is_success() {
+            eprintln!("[HUD] Claude OAuth usage API returned {status}");
+        }
+        if status.is_success() {
             let usage = response
                 .json::<serde_json::Value>()
                 .await
@@ -320,10 +329,12 @@ pub async fn fetch_claude_usage(credential: &Credential) -> Result<ProviderUsage
                 .unwrap_or(0);
 
             if five_pct.is_some() || seven_pct.is_some() {
+                // API returns utilization as a fraction (0.0–1.0), convert to percent
+                let to_pct = |v: f64| if v <= 1.0 { v * 100.0 } else { v };
                 return Ok(ProviderUsage {
                     rate_limit: Some(RateLimit {
-                        five_hour_percent: five_pct.unwrap_or(0.0),
-                        seven_day_percent: seven_pct.unwrap_or(0.0),
+                        five_hour_percent: five_pct.map(to_pct).unwrap_or(0.0),
+                        seven_day_percent: seven_pct.map(to_pct).unwrap_or(0.0),
                         five_hour_reset_seconds: five_reset,
                         seven_day_reset_seconds: seven_reset,
                     }),

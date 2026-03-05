@@ -57,7 +57,11 @@ test.describe("Tab management", () => {
 
   test("close focused tab via Ctrl+W", async ({ page }) => {
     await page.getByRole("button", { name: "api-test", exact: true }).click();
-    await page.keyboard.press("Control+w");
+    await page.waitForTimeout(100);
+    // Use the appropriate modifier for the platform
+    const isMac = process.platform === "darwin";
+    const modifier = isMac ? "Meta" : "Control";
+    await page.keyboard.press(`${modifier}+w`);
 
     await expect(page.getByRole("button", { name: "api-test", exact: true })).toHaveCount(0);
   });

@@ -1,9 +1,11 @@
+use crate::file_watcher::FileWatcher;
 use crate::metrics::{create_parser, MetricParser};
 use crate::provider::{
     build_provider_command, detect_providers as detect_provider_paths, DetectedProvider,
 };
 use crate::state::{AppState, PtySession, SessionStatus};
 use crate::statusline::StatuslineWatcher;
+use crate::transcript::{discover_transcript_path, TranscriptWatcher};
 use portable_pty::{native_pty_system, PtySize};
 use regex::Regex;
 use serde::Serialize;
@@ -227,34 +229,66 @@ pub struct CliQuotaSnapshot {
 
 #[tauri::command]
 pub async fn fetch_cli_quota(provider: String, cwd: String) -> Result<Option<CliQuotaSnapshot>, String> {
-    if provider != "codex-cli" {
-        return Ok(None);
+    match provider.as_str() {
+        "codex-cli" => {
+            let output = timeout(
+                Duration::from_secs(4),
+                TokioCommand::new("codex")
+                    .arg("-C")
+                    .arg(cwd)
+                    .arg("exec")
+                    .arg("--skip-git-repo-check")
+                    .arg("/status")
+                    .output(),
+            )
+            .await;
+
+            let output = match output {
+                Ok(Ok(output)) => output,
+                Ok(Err(e)) => return Err(format!("failed to execute codex status: {e}")),
+                Err(_) => return Ok(None),
+            };
+
+            if !output.status.success() {
+                return Ok(None);
+            }
+
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            Ok(parse_codex_status_output(&stdout))
+        }
+        "gemini-cli" => {
+            let output = timeout(
+                Duration::from_secs(4),
+                TokioCommand::new("gemini")
+                    .arg("--non-interactive")
+                    .arg("-p")
+                    .arg("/usage")
+                    .current_dir(if cwd.is_empty() { ".".to_string() } else { cwd })
+                    .output(),
+            )
+            .await;
+
+            let output = match output {
+                Ok(Ok(output)) => output,
+                // gemini CLI not installed or other I/O error — graceful fallback
+                Ok(Err(_)) => return Ok(None),
+                // timeout
+                Err(_) => return Ok(None),
+            };
+
+            let text = String::from_utf8_lossy(&output.stdout).to_string()
+                + &String::from_utf8_lossy(&output.stderr).to_string();
+            Ok(parse_gemini_usage_output(&text))
+        }
+        _ => Ok(None),
     }
+}
 
-    let output = timeout(
-        Duration::from_secs(4),
-        TokioCommand::new("codex")
-        .arg("-C")
-        .arg(cwd)
-        .arg("exec")
-        .arg("--skip-git-repo-check")
-        .arg("/status")
-        .output(),
-    )
-    .await;
-
-    let output = match output {
-        Ok(Ok(output)) => output,
-        Ok(Err(e)) => return Err(format!("failed to execute codex status: {e}")),
-        Err(_) => return Ok(None),
-    };
-
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    Ok(parse_codex_status_output(&stdout))
+#[tauri::command]
+pub async fn get_project_root() -> Result<String, String> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| format!("failed to get current dir: {e}"))
 }
 
 fn parse_codex_status_output(text: &str) -> Option<CliQuotaSnapshot> {
@@ -305,6 +339,74 @@ fn parse_codex_status_output(text: &str) -> Option<CliQuotaSnapshot> {
     })
 }
 
+fn parse_gemini_usage_output(text: &str) -> Option<CliQuotaSnapshot> {
+    // Matches lines like: gemini-2.5-pro    RPM  75%  resets in 1h 30m
+    let row_re = Regex::new(
+        r"(?im)^\s*(gemini-[\w.-]+)\s+\S+\s+(\d+(?:\.\d+)?)%\s+resets\s+in\s+([0-9hms ]+)\s*$",
+    )
+    .ok()?;
+
+    let mut model: Option<String> = None;
+    let mut short_left: Option<f64> = None;
+    let mut short_reset: Option<String> = None;
+    let mut long_left: Option<f64> = None;
+    let mut long_reset: Option<String> = None;
+
+    for cap in row_re.captures_iter(text) {
+        let row_model = cap.get(1).map(|m| m.as_str().trim().to_string());
+        let remaining: f64 = match cap.get(2).and_then(|m| m.as_str().parse().ok()) {
+            Some(v) => v,
+            None => continue,
+        };
+        let reset_label = cap
+            .get(3)
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_default();
+
+        if model.is_none() {
+            model = row_model;
+        }
+
+        // Classify window by reset duration: <=8h → short (RPM/RPH), else long (RPD)
+        let hours_re = Regex::new(r"(\d+)h").ok()?;
+        let mins_re = Regex::new(r"(\d+)m").ok()?;
+        let hours: f64 = hours_re
+            .captures(&reset_label)
+            .and_then(|c| c.get(1).and_then(|m| m.as_str().parse().ok()))
+            .unwrap_or(0.0);
+        let mins: f64 = mins_re
+            .captures(&reset_label)
+            .and_then(|c| c.get(1).and_then(|m| m.as_str().parse().ok()))
+            .unwrap_or(0.0);
+        let total_hours = hours + mins / 60.0;
+        let is_short = total_hours > 0.0 && total_hours <= 8.0;
+
+        if is_short {
+            if short_left.is_none() || remaining < short_left.unwrap_or(f64::MAX) {
+                short_left = Some(remaining);
+                short_reset = Some(format!("in {reset_label}"));
+            }
+        } else if long_left.is_none() || remaining < long_left.unwrap_or(f64::MAX) {
+            long_left = Some(remaining);
+            long_reset = Some(format!("in {reset_label}"));
+        }
+    }
+
+    if model.is_none() && short_left.is_none() && long_left.is_none() {
+        return None;
+    }
+
+    Some(CliQuotaSnapshot {
+        provider: "gemini-cli".to_string(),
+        model,
+        five_hour_left_percent: short_left,
+        seven_day_left_percent: long_left,
+        five_hour_reset_label: short_reset,
+        seven_day_reset_label: long_reset,
+        cost_usd: None,
+    })
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatuslineSetupResult {
@@ -331,14 +433,43 @@ pub async fn setup_claude_statusline() -> Result<StatuslineSetupResult, String> 
     };
 
     // Check if statusLine is already configured
-    if settings.get("statusLine").is_some() {
-        return Ok(StatuslineSetupResult {
-            configured: false,
-            already_configured: true,
-        });
+    if let Some(sl) = settings.get("statusLine") {
+        let existing_cmd = sl.get("command").and_then(|c| c.as_str()).unwrap_or("");
+        if existing_cmd.contains("TERMINAI_SL_PATH") {
+            return Ok(StatuslineSetupResult {
+                configured: false,
+                already_configured: true,
+            });
+        }
+        // Another tool's statusline exists (e.g. oh-my-claudecode) — chain with tee
+        // so both TerminAI AND the existing tool receive stdin data
+        if !existing_cmd.is_empty() {
+            let chained = format!(
+                "sh -c 'if [ -n \"$TERMINAI_SL_PATH\" ]; then tee \"$TERMINAI_SL_PATH\" 2>/dev/null | {}; else {}; fi'",
+                existing_cmd.replace('\'', "'\\''"),
+                existing_cmd.replace('\'', "'\\''")
+            );
+            settings["statusLine"] = serde_json::json!({
+                "type": "command",
+                "command": chained
+            });
+
+            if let Some(parent) = settings_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let formatted = serde_json::to_string_pretty(&settings)
+                .map_err(|e| format!("failed to serialize settings: {e}"))?;
+            std::fs::write(&settings_path, formatted)
+                .map_err(|e| format!("failed to write settings: {e}"))?;
+
+            return Ok(StatuslineSetupResult {
+                configured: true,
+                already_configured: false,
+            });
+        }
     }
 
-    // Add our statusline command
+    // No statusline configured — add ours
     settings["statusLine"] = serde_json::json!({
         "type": "command",
         "command": "sh -c 'cat > \"$TERMINAI_SL_PATH\" 2>/dev/null || true'"
@@ -360,20 +491,147 @@ pub async fn setup_claude_statusline() -> Result<StatuslineSetupResult, String> 
     })
 }
 
+#[tauri::command]
+pub async fn setup_mcp_bridge(provider: String, project_root: String) -> Result<StatuslineSetupResult, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "cannot determine home directory".to_string())?;
+
+    // MCP Bridge absolute path
+    let bridge_path = std::path::PathBuf::from(&project_root)
+        .join("terminai-mcp-bridge")
+        .join("index.ts");
+    
+    let bridge_path_str = bridge_path.to_str()
+        .ok_or_else(|| "invalid bridge path".to_string())?;
+
+    if provider == "claude-code" {
+        let settings_path = std::path::PathBuf::from(&home).join(".claude").join("settings.json");
+        let mut settings: serde_json::Value = if settings_path.exists() {
+            let content = std::fs::read_to_string(&settings_path)
+                .map_err(|e| format!("failed to read settings: {e}"))?;
+            serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        // Ensure mcpServers object exists
+        if settings.get("mcpServers").is_none() {
+            settings["mcpServers"] = serde_json::json!({});
+        }
+
+        // Add or update terminai-bridge
+        settings["mcpServers"]["terminai-bridge"] = serde_json::json!({
+            "command": "bun",
+            "args": ["run", bridge_path_str]
+        });
+
+        if let Some(parent) = settings_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let formatted = serde_json::to_string_pretty(&settings)
+            .map_err(|e| format!("failed to serialize settings: {e}"))?;
+        std::fs::write(&settings_path, formatted)
+            .map_err(|e| format!("failed to write settings: {e}"))?;
+
+        return Ok(StatuslineSetupResult {
+            configured: true,
+            already_configured: false,
+        });
+    }
+
+    // Codex/Gemini: Future implementation based on their specific config locations
+    Ok(StatuslineSetupResult {
+        configured: false,
+        already_configured: false,
+    })
+}
+
 fn spawn_statusline_poller(
     app: AppHandle,
     session: Arc<PtySession>,
     mut watcher: StatuslineWatcher,
 ) {
     let session_id = session.id.clone();
+    let sl_path = std::path::PathBuf::from(watcher.sl_file_path().to_string());
 
     let handle = tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let mut first_data_received = false;
+        let session_start = std::time::SystemTime::now();
 
-            if let Some(update) = watcher.poll() {
-                let metrics_event = format!("metrics-{}", session_id);
-                let _ = app.emit(metrics_event.as_str(), &update);
+        // Transcript watcher state
+        let mut transcript_watcher: Option<TranscriptWatcher> = None;
+
+        // Set up file watcher for statusline JSON (event-driven, replaces 500ms polling)
+        let (mut sl_rx, _fw_handle) = match FileWatcher::watch(sl_path) {
+            Ok((fw, rx)) => (rx, Some(fw)),
+            Err(e) => {
+                tracing::warn!("[statusline] file watcher failed, falling back to polling: {e}");
+                // Fallback: create a channel that we'll feed manually via a poll loop
+                let (tx, rx) = tokio::sync::mpsc::channel(16);
+                let fallback_path =
+                    std::path::PathBuf::from(watcher.sl_file_path().to_string());
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        let _ = tx.send(fallback_path.clone()).await;
+                    }
+                });
+                (rx, None)
+            }
+        };
+
+        // Transcript poll timer (1s interval, independent of statusline events)
+        let mut transcript_interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        // Timeout for initial data: try transcript discovery after 10s of no statusline data
+        let mut discovery_attempted = false;
+
+        loop {
+            tokio::select! {
+                // Statusline file changed (event-driven via notify)
+                Some(_path) = sl_rx.recv() => {
+                    if let Some(update) = watcher.poll() {
+                        if !first_data_received {
+                            first_data_received = true;
+                            tracing::info!("[statusline] first data received for session {}", session_id);
+                        }
+                        let metrics_event = format!("metrics-{}", session_id);
+                        let _ = app.emit(metrics_event.as_str(), &update);
+
+                        // Pick up transcript_path from statusline
+                        if transcript_watcher.is_none() {
+                            if let Some(path) = watcher.last_transcript_path() {
+                                tracing::info!("[transcript] using path from statusline: {}", path);
+                                transcript_watcher =
+                                    Some(TranscriptWatcher::new(std::path::PathBuf::from(path)));
+                            }
+                        }
+                    }
+                }
+                // Transcript poll (1s timer, separate from statusline events)
+                _ = transcript_interval.tick() => {
+                    // Attempt transcript discovery if no statusline data after 10s
+                    if !first_data_received && !discovery_attempted {
+                        let elapsed = session_start.elapsed().unwrap_or_default();
+                        if elapsed.as_secs() >= 10 && transcript_watcher.is_none() {
+                            discovery_attempted = true;
+                            if let Some(path) = discover_transcript_path(session_start) {
+                                tracing::info!(
+                                    "[transcript] discovered path via fallback scan: {}",
+                                    path.display()
+                                );
+                                transcript_watcher = Some(TranscriptWatcher::new(path));
+                            }
+                        }
+                    }
+
+                    if let Some(ref mut tw) = transcript_watcher {
+                        if let Some(update) = tw.poll() {
+                            let metrics_event = format!("metrics-{}", session_id);
+                            let _ = app.emit(metrics_event.as_str(), &update);
+                        }
+                    }
+                }
             }
         }
     });
@@ -446,7 +704,8 @@ fn spawn_reader_task(
                         let _ = app.emit(event_name.as_str(), &chunk);
 
                         // Parse metrics from the chunk
-                        if let Some(metric_update) = parser.parse_chunk(&chunk) {
+                        if let Some(mut metric_update) = parser.parse_chunk(&chunk) {
+                            metric_update.source = Some("pty-regex".to_string());
                             let metrics_event = format!("metrics-{}", session.id);
                             let _ = app.emit(metrics_event.as_str(), &metric_update);
 
@@ -482,4 +741,75 @@ fn emit_status(app: &AppHandle, session_id: &str, status: SessionStatus) -> Resu
     let event_name = format!("session-status-{session_id}");
     app.emit(event_name.as_str(), status)
         .map_err(|error| format!("failed to emit status event: {error}"))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OmcState {
+    pub active_mode: Option<String>,
+    pub phase: Option<String>,
+    pub iteration: Option<u32>,
+}
+
+fn validate_cwd(cwd: &str) -> Result<std::path::PathBuf, String> {
+    let canonical = std::fs::canonicalize(cwd)
+        .map_err(|_| "invalid working directory".to_string())?;
+    let home = std::env::var("HOME").unwrap_or_default();
+    if !home.is_empty() && !canonical.starts_with(&home) {
+        return Err("cwd must be under home directory".to_string());
+    }
+    Ok(canonical)
+}
+
+#[tauri::command]
+pub async fn fetch_omc_state(cwd: String) -> Result<Option<OmcState>, String> {
+    let canonical = validate_cwd(&cwd)?;
+
+    tokio::task::spawn_blocking(move || {
+        let state_dir = canonical.join(".omc").join("state");
+        if !state_dir.exists() {
+            return Ok(None);
+        }
+
+        let modes = ["ralph", "autopilot", "ultrawork", "team", "ultraqa", "ralplan"];
+        for mode in &modes {
+            let file = state_dir.join(format!("{mode}-state.json"));
+            if let Ok(content) = std::fs::read_to_string(&file) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if json.get("active").and_then(|v| v.as_bool()) == Some(true) {
+                        return Ok(Some(OmcState {
+                            active_mode: Some(mode.to_string()),
+                            phase: json.get("current_phase").and_then(|v| v.as_str()).map(String::from),
+                            iteration: json.get("iteration").and_then(|v| v.as_u64()).map(|v| v as u32),
+                        }));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn fetch_git_branch(cwd: String) -> Result<Option<String>, String> {
+    let canonical = validate_cwd(&cwd)?;
+
+    let output = TokioCommand::new("git")
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("HEAD")
+        .current_dir(&canonical)
+        .output()
+        .await;
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if branch.is_empty() { Ok(None) } else { Ok(Some(branch)) }
+        }
+        _ => Ok(None),
+    }
 }
