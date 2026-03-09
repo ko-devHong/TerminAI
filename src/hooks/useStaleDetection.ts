@@ -1,4 +1,4 @@
-import { useAtomValue, useStore } from "jotai";
+import { useStore } from "jotai";
 import { useEffect } from "react";
 
 import { allTabsAtom, tabAtom } from "@/atoms/spaces";
@@ -7,12 +7,12 @@ const STALE_THRESHOLD_MS = 180_000; // 3 minutes
 const CHECK_INTERVAL_MS = 30_000; // check every 30s
 
 export function useStaleDetection() {
-  const allTabs = useAtomValue(allTabsAtom);
   const store = useStore();
 
   useEffect(() => {
     function checkStale() {
       const now = Date.now();
+      const allTabs = store.get(allTabsAtom);
 
       for (const tab of allTabs) {
         if (!tab.sessionId) continue;
@@ -38,5 +38,5 @@ export function useStaleDetection() {
 
     const interval = window.setInterval(checkStale, CHECK_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [allTabs, store]);
+  }, [store]);
 }

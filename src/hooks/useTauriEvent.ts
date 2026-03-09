@@ -17,7 +17,11 @@ export function useTauriEvent<T>(eventName: string | null, handler: (payload: T)
         handler(event.payload);
       }
     }).then((detach) => {
-      unlisten = detach;
+      if (isMounted) {
+        unlisten = detach;
+      } else {
+        detach();
+      }
     });
 
     return () => {

@@ -174,6 +174,7 @@ export function TerminalView({ tabId, searchOpen = false, onSearchClose }: Termi
       if (cached.terminal.element.parentElement !== container) {
         container.appendChild(cached.terminal.element);
       }
+      cached.terminal.options.fontSize = fontSize;
       cached.fitAddon.fit();
     } else {
       cached.terminal.open(container);
@@ -311,8 +312,8 @@ export function TerminalView({ tabId, searchOpen = false, onSearchClose }: Termi
     if (
       !tabId ||
       !sessionId ||
-      !tab ||
-      (tab.provider !== "codex-cli" && tab.provider !== "gemini-cli") ||
+      !tabProvider ||
+      (tabProvider !== "codex-cli" && tabProvider !== "gemini-cli") ||
       !isTauriRuntimeAvailable()
     ) {
       return;
@@ -329,8 +330,8 @@ export function TerminalView({ tabId, searchOpen = false, onSearchClose }: Termi
       running = true;
       try {
         const snapshot = await invokeTauri<CliQuotaSnapshot | null>("fetch_cli_quota", {
-          provider: tab.provider,
-          cwd: tab.cwd,
+          provider: tabProvider,
+          cwd: tabCwd ?? ".",
         });
 
         if (!mounted || !snapshot) {
@@ -396,7 +397,7 @@ export function TerminalView({ tabId, searchOpen = false, onSearchClose }: Termi
         window.clearInterval(intervalId);
       }
     };
-  }, [tabId, sessionId, tab, store]);
+  }, [tabId, sessionId, tabProvider, tabCwd, store]);
 
   const handleOutput = useCallback(
     (payload: string) => {

@@ -14,6 +14,7 @@ import {
   closeTabAtom,
   createTabAtom,
   cwdEditorAtom,
+  cwdEditorTabAtom,
   favoriteTabIdsAtom,
   focusedTabAtom,
   focusedTabIdAtom,
@@ -21,10 +22,13 @@ import {
   initializeWorkspaceAtom,
   setTabCwdAtom,
   spacesAtom,
-  tabAtom,
 } from "@/atoms/spaces";
 import { HUDPanel } from "@/components/hud/HUDPanel";
-import { ProviderSetup, resetOnboarding, useOnboardingRequired } from "@/components/onboarding/ProviderSetup";
+import {
+  ProviderSetup,
+  resetOnboarding,
+  useOnboardingRequired,
+} from "@/components/onboarding/ProviderSetup";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,7 +58,7 @@ function App() {
   const allTabs = useAtomValue(allTabsAtom);
   const favoriteTabIds = useAtomValue(favoriteTabIdsAtom);
   const cwdEditor = useAtomValue(cwdEditorAtom);
-  const editingTab = useAtomValue(tabAtom(cwdEditor.tabId ?? "__none__"));
+  const editingTab = useAtomValue(cwdEditorTabAtom);
   const defaultCwd = useAtomValue(defaultCwdAtom);
   const theme = useAtomValue(themeAtom);
   const setSidebarCollapsed = useSetAtom(sidebarCollapsedAtom);

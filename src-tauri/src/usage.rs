@@ -84,22 +84,6 @@ fn find_claude_keychain_credential() -> Option<Credential> {
                 }
 
                 if raw.starts_with('{') {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                        let nested = json.get("claudeAiOauth").unwrap_or(&json);
-                        if let Some(token) = nested.get("accessToken").and_then(|v| v.as_str()) {
-                            if !token.is_empty() {
-                                return Some(Credential {
-                                    token: token.to_string(),
-                                    is_oauth: true,
-                                    refresh_token: None,
-                                    expires_at_ms: None,
-                                });
-                            }
-                        }
-                    }
-                }
-
-                if raw.starts_with('{') {
                     if let Some(parsed) = parse_claude_oauth_json(&raw) {
                         return Some(parsed);
                     }

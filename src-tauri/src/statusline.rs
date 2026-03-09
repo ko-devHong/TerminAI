@@ -98,7 +98,6 @@ impl StatuslineWatcher {
         Some(to_metric_update(&json))
     }
 
-    #[allow(dead_code)]
     pub fn cleanup(&self) {
         let _ = std::fs::remove_file(&self.sl_file_path);
     }

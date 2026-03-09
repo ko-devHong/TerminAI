@@ -218,16 +218,30 @@ impl TranscriptWatcher {
     }
 
     fn handle_tool_result(&mut self, map: &serde_json::Map<String, serde_json::Value>) {
-        let tool_use_id = match map
+        let tool_use_id = map
             .get("tool_use_id")
             .and_then(|id| id.as_str())
-        {
-            Some(id) => id.to_string(),
-            None => return,
-        };
+            .map(|s| s.to_string());
 
-        self.pending_tool_ids.retain(|id| id != &tool_use_id);
-        self.pending_permissions = !self.pending_tool_ids.is_empty();
+        match tool_use_id {
+            Some(id) => {
+                let before = self.pending_tool_ids.len();
+                self.pending_tool_ids.retain(|pending| pending != &id);
+                // If no named id was cleared and we have anonymous pending, decrement one
+                if self.pending_tool_ids.len() == before && self.anonymous_pending_count > 0 {
+                    self.anonymous_pending_count -= 1;
+                }
+            }
+            None => {
+                // No tool_use_id: clear one anonymous pending if any
+                if self.anonymous_pending_count > 0 {
+                    self.anonymous_pending_count -= 1;
+                }
+            }
+        }
+
+        self.pending_permissions =
+            self.anonymous_pending_count > 0 || !self.pending_tool_ids.is_empty();
     }
 
     fn build_update(&self) -> MetricUpdate {

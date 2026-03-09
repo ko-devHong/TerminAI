@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import { atomFamily, atomWithStorage } from "jotai/utils";
+import { gitBranchAtom, hudMetricsAtom, omcStateAtom } from "@/atoms/hud";
 import {
   INITIAL_FAVORITE_TAB_IDS,
   INITIAL_FOCUSED_TAB_ID,
@@ -318,6 +319,11 @@ export const closeCwdEditorAtom = atom(null, (_get, set) => {
   set(cwdEditorAtom, { open: false, tabId: null });
 });
 
+export const cwdEditorTabAtom = atom((get) => {
+  const { tabId } = get(cwdEditorAtom);
+  return tabId ? get(tabAtom(tabId)) : null;
+});
+
 export const duplicateTabAtom = atom(null, (get, set, tabId: string) => {
   const sourceTab = get(tabAtom(tabId));
   if (!sourceTab) {
@@ -385,6 +391,12 @@ export const closeTabAtom = atom(null, (get, set, tabId: string) => {
     favoriteTabIds.filter((id) => id !== tabId),
   );
   set(tabAtom(tabId), null);
+  tabAtom.remove(tabId);
+  if (targetTab.sessionId) {
+    hudMetricsAtom.remove(targetTab.sessionId);
+    omcStateAtom.remove(targetTab.sessionId);
+    gitBranchAtom.remove(targetTab.sessionId);
+  }
   disposeTerminalCache(tabId);
   const nextTabCwds = { ...get(tabCwdsAtom) };
   delete nextTabCwds[tabId];

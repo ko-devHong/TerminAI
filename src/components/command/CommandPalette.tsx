@@ -40,15 +40,16 @@ export function CommandPalette({
         <CommandGroup heading="Quick Actions">
           <CommandItem
             onSelect={() => {
-              if (confirm("모든 데이터(탭, 스페이스, 설정)를 초기화하고 온보딩을 다시 시작할까요?")) {
+              if (
+                confirm("모든 데이터(탭, 스페이스, 설정)를 초기화하고 온보딩을 다시 시작할까요?")
+              ) {
                 window.localStorage.clear();
                 window.location.reload();
               }
             }}
             className="text-red-400 focus:bg-red-500/10 focus:text-red-400"
           >
-            <Command className="size-4" />
-            앱 데이터 전체 초기화 (Reset)
+            <Command className="size-4" />앱 데이터 전체 초기화 (Reset)
           </CommandItem>
           <CommandItem
             onSelect={() => {

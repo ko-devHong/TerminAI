@@ -10,12 +10,36 @@ use portable_pty::{native_pty_system, PtySize};
 use regex::Regex;
 use serde::Serialize;
 use std::io::{Read, Write};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tauri::{AppHandle, Emitter};
 use tokio::process::Command as TokioCommand;
 use tokio::task;
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
+
+// ── Static regexes (compiled once) ──────────────────────────────────────────
+
+static CODEX_MODEL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?im)^\s*Model:\s+([^\n(]+(?:\([^)]+\))?)").unwrap()
+});
+static CODEX_FIVE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?im)^\s*5h limit:\s+\[[^\]]*\]\s*(\d+(?:\.\d+)?)%\s*left(?:\s*\(resets\s+([^)]+)\))?").unwrap()
+});
+static CODEX_WEEK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?im)^\s*Weekly limit:\s+\[[^\]]*\]\s*(\d+(?:\.\d+)?)%\s*left(?:\s*\(resets\s+([^)]+)\))?").unwrap()
+});
+static CODEX_COST_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?im)\$\s?(\d+(?:\.\d+)?)").unwrap()
+});
+static GEMINI_ROW_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?im)^\s*(gemini-[\w.-]+)\s+\S+\s+(\d+(?:\.\d+)?)%\s+resets\s+in\s+([0-9hms ]+)\s*$").unwrap()
+});
+static GEMINI_HOURS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(\d+)h").unwrap()
+});
+static GEMINI_MINS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(\d+)m").unwrap()
+});
 
 #[tauri::command]
 pub async fn spawn_session(
@@ -74,7 +98,7 @@ pub async fn spawn_session(
         writer: Arc::new(tokio::sync::Mutex::new(writer)),
         child: Arc::new(tokio::sync::Mutex::new(child)),
         status: Arc::new(tokio::sync::Mutex::new(SessionStatus::Running)),
-        statusline_abort: Arc::new(tokio::sync::Mutex::new(None)),
+        statusline_abort: Arc::new(std::sync::Mutex::new(None)),
     });
 
     state
@@ -164,9 +188,10 @@ pub async fn kill_session(
 
     // Abort statusline poller if running
     {
-        let mut abort = session.statusline_abort.lock().await;
-        if let Some(handle) = abort.take() {
-            handle.abort();
+        if let Ok(mut abort) = session.statusline_abort.lock() {
+            if let Some(handle) = abort.take() {
+                handle.abort();
+            }
         }
     }
 
@@ -175,7 +200,11 @@ pub async fn kill_session(
         child
             .kill()
             .map_err(|error| format!("failed to kill session: {error}"))?;
+        let _ = child.wait();
     }
+
+    // Clean up the statusline /tmp file for this session
+    StatuslineWatcher::new(&session_id).cleanup();
 
     {
         let mut status = session.status.lock().await;
@@ -229,6 +258,8 @@ pub struct CliQuotaSnapshot {
 
 #[tauri::command]
 pub async fn fetch_cli_quota(provider: String, cwd: String) -> Result<Option<CliQuotaSnapshot>, String> {
+    let validated_cwd = validate_cwd(&cwd)?;
+    let cwd = validated_cwd.to_string_lossy().to_string();
     match provider.as_str() {
         "codex-cli" => {
             let output = timeout(
@@ -292,17 +323,11 @@ pub async fn get_project_root() -> Result<String, String> {
 }
 
 fn parse_codex_status_output(text: &str) -> Option<CliQuotaSnapshot> {
-    let model_re = Regex::new(r"(?im)^\s*Model:\s+([^\n(]+(?:\([^)]+\))?)").ok()?;
-    let five_re = Regex::new(r"(?im)^\s*5h limit:\s+\[[^\]]*\]\s*(\d+(?:\.\d+)?)%\s*left(?:\s*\(resets\s+([^)]+)\))?").ok()?;
-    let week_re =
-        Regex::new(r"(?im)^\s*Weekly limit:\s+\[[^\]]*\]\s*(\d+(?:\.\d+)?)%\s*left(?:\s*\(resets\s+([^)]+)\))?").ok()?;
-    let cost_re = Regex::new(r"(?im)\$\s?(\d+(?:\.\d+)?)").ok()?;
-
-    let model = model_re
+    let model = CODEX_MODEL_RE
         .captures(text)
         .and_then(|c| c.get(1).map(|m| m.as_str().trim().to_string()));
 
-    let (five_left, five_reset) = if let Some(cap) = five_re.captures(text) {
+    let (five_left, five_reset) = if let Some(cap) = CODEX_FIVE_RE.captures(text) {
         (
             cap.get(1).and_then(|m| m.as_str().parse::<f64>().ok()),
             cap.get(2).map(|m| m.as_str().trim().to_string()),
@@ -311,7 +336,7 @@ fn parse_codex_status_output(text: &str) -> Option<CliQuotaSnapshot> {
         (None, None)
     };
 
-    let (week_left, week_reset) = if let Some(cap) = week_re.captures(text) {
+    let (week_left, week_reset) = if let Some(cap) = CODEX_WEEK_RE.captures(text) {
         (
             cap.get(1).and_then(|m| m.as_str().parse::<f64>().ok()),
             cap.get(2).map(|m| m.as_str().trim().to_string()),
@@ -320,7 +345,7 @@ fn parse_codex_status_output(text: &str) -> Option<CliQuotaSnapshot> {
         (None, None)
     };
 
-    let cost = cost_re
+    let cost = CODEX_COST_RE
         .captures(text)
         .and_then(|c| c.get(1).and_then(|m| m.as_str().parse::<f64>().ok()));
 
@@ -340,19 +365,13 @@ fn parse_codex_status_output(text: &str) -> Option<CliQuotaSnapshot> {
 }
 
 fn parse_gemini_usage_output(text: &str) -> Option<CliQuotaSnapshot> {
-    // Matches lines like: gemini-2.5-pro    RPM  75%  resets in 1h 30m
-    let row_re = Regex::new(
-        r"(?im)^\s*(gemini-[\w.-]+)\s+\S+\s+(\d+(?:\.\d+)?)%\s+resets\s+in\s+([0-9hms ]+)\s*$",
-    )
-    .ok()?;
-
     let mut model: Option<String> = None;
     let mut short_left: Option<f64> = None;
     let mut short_reset: Option<String> = None;
     let mut long_left: Option<f64> = None;
     let mut long_reset: Option<String> = None;
 
-    for cap in row_re.captures_iter(text) {
+    for cap in GEMINI_ROW_RE.captures_iter(text) {
         let row_model = cap.get(1).map(|m| m.as_str().trim().to_string());
         let remaining: f64 = match cap.get(2).and_then(|m| m.as_str().parse().ok()) {
             Some(v) => v,
@@ -368,13 +387,11 @@ fn parse_gemini_usage_output(text: &str) -> Option<CliQuotaSnapshot> {
         }
 
         // Classify window by reset duration: <=8h → short (RPM/RPH), else long (RPD)
-        let hours_re = Regex::new(r"(\d+)h").ok()?;
-        let mins_re = Regex::new(r"(\d+)m").ok()?;
-        let hours: f64 = hours_re
+        let hours: f64 = GEMINI_HOURS_RE
             .captures(&reset_label)
             .and_then(|c| c.get(1).and_then(|m| m.as_str().parse().ok()))
             .unwrap_or(0.0);
-        let mins: f64 = mins_re
+        let mins: f64 = GEMINI_MINS_RE
             .captures(&reset_label)
             .and_then(|c| c.get(1).and_then(|m| m.as_str().parse().ok()))
             .unwrap_or(0.0);
@@ -574,7 +591,9 @@ fn spawn_statusline_poller(
                 tokio::spawn(async move {
                     loop {
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        let _ = tx.send(fallback_path.clone()).await;
+                        if tx.send(fallback_path.clone()).await.is_err() {
+                            break;
+                        }
                     }
                 });
                 (rx, None)
@@ -636,13 +655,11 @@ fn spawn_statusline_poller(
         }
     });
 
-    // Store abort handle so we can clean up on session kill
+    // Store abort handle synchronously so kill_session always sees it
     let abort_handle = handle.abort_handle();
-    let abort_store = session.statusline_abort.clone();
-    tokio::spawn(async move {
-        let mut guard = abort_store.lock().await;
+    if let Ok(mut guard) = session.statusline_abort.lock() {
         *guard = Some(abort_handle);
-    });
+    }
 }
 
 fn spawn_reader_task(

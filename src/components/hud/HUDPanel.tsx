@@ -55,9 +55,10 @@ export function HUDPanel() {
   const gitBranch = useAtomValue(gitBranchAtom(activeTab?.sessionId ?? ""));
 
   useEffect(() => {
+    if (mode === "hidden") return;
     const interval = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [mode]);
 
   const currentStatus = useMemo((): ProcessStatus => {
     return metrics?.detailedStatus ?? liveStatus ?? activeTab?.processStatus ?? "idle";

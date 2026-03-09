@@ -52,9 +52,6 @@ export function useUsagePolling(provider: AIProvider | null) {
         if (mounted && usage) {
           setUsage(usage);
           failCountRef.current = 0;
-          if (!usage.hasCredentials) {
-          } else if (!usage.rateLimit) {
-          }
         }
         scheduleNext(POLL_INTERVAL_MS);
       } catch (err) {

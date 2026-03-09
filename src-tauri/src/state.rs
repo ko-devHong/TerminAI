@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use std::sync::Mutex as StdMutex;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -23,7 +24,7 @@ pub struct PtySession {
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     pub status: Arc<Mutex<SessionStatus>>,
-    pub statusline_abort: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
+    pub statusline_abort: Arc<StdMutex<Option<tokio::task::AbortHandle>>>,
 }
 
 #[derive(Clone)]

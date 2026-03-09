@@ -96,6 +96,7 @@ export function TerminalSearchBar({ tabId, open, onClose }: TerminalSearchBarPro
       />
 
       <button
+        type="button"
         onClick={() => setCaseSensitive((prev) => !prev)}
         title="Case sensitive"
         className={`rounded px-1 py-0.5 text-xs transition-colors ${
@@ -110,6 +111,7 @@ export function TerminalSearchBar({ tabId, open, onClose }: TerminalSearchBarPro
       <div className="mx-1 h-4 w-px bg-zinc-700" />
 
       <button
+        type="button"
         onClick={findPrevious}
         disabled={!query}
         title="Previous match (Shift+Enter)"
@@ -119,6 +121,7 @@ export function TerminalSearchBar({ tabId, open, onClose }: TerminalSearchBarPro
       </button>
 
       <button
+        type="button"
         onClick={findNext}
         disabled={!query}
         title="Next match (Enter)"
@@ -128,6 +131,7 @@ export function TerminalSearchBar({ tabId, open, onClose }: TerminalSearchBarPro
       </button>
 
       <button
+        type="button"
         onClick={onClose}
         title="Close (Esc)"
         className="rounded p-0.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-200"

@@ -58,9 +58,9 @@ const STATUS_ERROR_RE = /(?:error:|failed:|exception:|panic:|rate limit exceeded
 const STATUS_RUNNING_RE = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷]|⏺/;
 const STATUS_IDLE_RE = /[❯$>]\s*$/m;
 
-function parseScaledNumber(numStr: string, suffix = ""): number {
+function parseScaledNumber(numStr: string, suffix = ""): number | null {
   const n = Number.parseFloat(numStr);
-  if (Number.isNaN(n)) return 0;
+  if (Number.isNaN(n)) return null;
   const scale = suffix.toLowerCase() === "m" ? 1_000_000 : suffix.toLowerCase() === "k" ? 1000 : 1;
   return Math.round(n * scale);
 }
