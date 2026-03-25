@@ -179,12 +179,22 @@ pub async fn kill_session(
     state: tauri::State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
+    // First, get a reference to the session without removing it yet.
+    // This prevents write_to_session from failing with "session not found"
+    // while we're still killing the process.
     let session = {
-        let mut sessions = state.sessions.lock().await;
+        let sessions = state.sessions.lock().await;
         sessions
-            .remove(&session_id)
+            .get(&session_id)
+            .cloned()
             .ok_or_else(|| format!("session not found: {session_id}"))?
     };
+
+    // Mark status as disconnected first to signal other tasks
+    {
+        let mut status = session.status.lock().await;
+        *status = SessionStatus::Disconnected;
+    }
 
     // Abort statusline poller if running
     {
@@ -195,28 +205,32 @@ pub async fn kill_session(
         }
     }
 
+    // Kill the child process
     {
         let mut child = session.child.lock().await;
-        child
-            .kill()
-            .map_err(|error| format!("failed to kill session: {error}"))?;
+        let _ = child.kill();
         let _ = child.wait();
+    }
+
+    // Now remove from the map after cleanup is done
+    {
+        let mut sessions = state.sessions.lock().await;
+        sessions.remove(&session_id);
     }
 
     // Clean up the statusline /tmp file for this session
     StatuslineWatcher::new(&session_id).cleanup();
-
-    {
-        let mut status = session.status.lock().await;
-        *status = SessionStatus::Disconnected;
-    }
 
     emit_status(&app, &session_id, SessionStatus::Disconnected)
 }
 
 #[tauri::command]
 pub async fn detect_providers() -> Result<Vec<DetectedProvider>, String> {
-    Ok(detect_provider_paths())
+    // detect_provider_paths uses std::process::Command (blocking I/O).
+    // Run on a blocking thread to avoid starving the tokio runtime.
+    tokio::task::spawn_blocking(detect_provider_paths)
+        .await
+        .map_err(|e| format!("detect_providers join error: {e}"))
 }
 
 #[tauri::command]

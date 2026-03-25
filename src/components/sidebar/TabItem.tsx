@@ -1,12 +1,14 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { useAtomValue, useSetAtom } from "jotai";
-import { AlertCircle, Clock3, Copy, FolderCog, Loader2, Trash2, X } from "lucide-react";
+import { AlertCircle, Clock3, Copy, FolderCog, Loader2, Pencil, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   closeTabAtom,
   duplicateTabAtom,
   focusTabAtom,
   openCwdEditorAtom,
+  renameTabAtom,
   tabAtom,
 } from "@/atoms/spaces";
 
@@ -92,9 +94,14 @@ export function TabItem({ tabId }: TabItemProps) {
   const closeTab = useSetAtom(closeTabAtom);
   const duplicateTab = useSetAtom(duplicateTabAtom);
   const openCwdEditor = useSetAtom(openCwdEditorAtom);
+  const renameTab = useSetAtom(renameTabAtom);
   const { attributes, listeners, setNodeRef, isDragging } = useSortable({
     id: `tab:${tabId}`,
   });
+
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   if (!tab) {
     return null;
@@ -113,24 +120,46 @@ export function TabItem({ tabId }: TabItemProps) {
     closeTab(currentTab.id);
   }
 
+  function startRenaming() {
+    setRenameValue(currentTab.name);
+    setIsRenaming(true);
+  }
+
+  function commitRename() {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== currentTab.name) {
+      renameTab({ tabId: currentTab.id, name: trimmed });
+    }
+    setIsRenaming(false);
+  }
+
+  function cancelRename() {
+    setIsRenaming(false);
+  }
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
           ref={setNodeRef}
           className={cn(
-            "tab-item group flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors",
+            "tab-item group flex h-8 w-full items-center rounded-md pr-1 pl-2 text-left text-xs transition-colors",
             currentTab.isFocused
               ? "border-l-2 border-emerald-500 bg-zinc-800 text-zinc-50"
               : "text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100",
             isDragging ? "opacity-30 border border-dashed border-zinc-600 bg-transparent" : "",
           )}
         >
+          {/* Drag handle + name area: takes remaining space, allows truncation */}
           <button
             type="button"
             {...attributes}
             {...listeners}
             onClick={() => focusTab(currentTab.id)}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              startRenaming();
+            }}
             className="flex min-w-0 flex-1 cursor-grab items-center gap-2 text-left active:cursor-grabbing"
             title={`${currentTab.name} (${currentTab.provider})\n${currentTab.cwd}`}
           >
@@ -142,26 +171,43 @@ export function TabItem({ tabId }: TabItemProps) {
               />
               <StatusOverlay status={currentTab.processStatus} />
             </span>
-            <span className="truncate">{currentTab.name}</span>
+            {isRenaming ? (
+              <RenameInput
+                ref={renameInputRef}
+                value={renameValue}
+                onChange={setRenameValue}
+                onCommit={commitRename}
+                onCancel={cancelRename}
+              />
+            ) : (
+              <span className="truncate">{currentTab.name}</span>
+            )}
           </button>
 
-          <button
-            type="button"
-            aria-label={`Close tab ${currentTab.name}`}
-            onMouseDown={(event) => {
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              event.stopPropagation();
-              void handleClose();
-            }}
-            className="shrink-0 rounded p-1 text-zinc-400 opacity-100 transition hover:bg-zinc-700 hover:text-zinc-100"
-          >
-            <X className="size-3" />
-          </button>
+          {/* Close button: fixed size, always visible on hover */}
+          {!isRenaming && (
+            <button
+              type="button"
+              aria-label={`Close tab ${currentTab.name}`}
+              onMouseDown={(event) => {
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                void handleClose();
+              }}
+              className="ml-1 shrink-0 rounded p-0.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-700 hover:text-zinc-100"
+            >
+              <X className="size-3" />
+            </button>
+          )}
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-44 border-zinc-700 bg-zinc-900 text-zinc-100">
+      <ContextMenuContent className="w-48 border-zinc-700 bg-zinc-900 text-zinc-100">
+        <ContextMenuItem onSelect={() => startRenaming()}>
+          <Pencil className="size-3.5" />
+          Rename
+        </ContextMenuItem>
         <ContextMenuItem onSelect={() => duplicateTab(currentTab.id)}>
           <Copy className="size-3.5" />
           Duplicate
@@ -183,3 +229,64 @@ export function TabItem({ tabId }: TabItemProps) {
     </ContextMenu>
   );
 }
+
+/** Inline rename input shown when user double-clicks or selects Rename from context menu. */
+const RenameInput = ({
+  ref,
+  value,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  ref: React.Ref<HTMLInputElement>;
+  value: string;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus and select all text when the input mounts
+  useEffect(() => {
+    const el = inputRef.current;
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  }, []);
+
+  // Merge refs
+  useEffect(() => {
+    if (typeof ref === "function") {
+      ref(inputRef.current);
+    } else if (ref && "current" in ref) {
+      (ref as React.MutableRefObject<HTMLInputElement | null>).current = inputRef.current;
+    }
+  }, [ref]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      e.stopPropagation();
+      if (e.key === "Enter") {
+        onCommit();
+      } else if (e.key === "Escape") {
+        onCancel();
+      }
+    },
+    [onCommit, onCancel],
+  );
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={handleKeyDown}
+      onBlur={onCommit}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      className="min-w-0 flex-1 rounded border border-zinc-600 bg-zinc-900 px-1 py-0.5 text-xs text-zinc-100 outline-none focus:border-emerald-500"
+    />
+  );
+};

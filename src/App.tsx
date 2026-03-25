@@ -73,6 +73,8 @@ function App() {
   const [isDefaultPathOpen, setIsDefaultPathOpen] = useState(false);
   const [defaultPathDraft, setDefaultPathDraft] = useState(defaultCwd);
   const [tabPathDraft, setTabPathDraft] = useState("");
+  const [isSavingCwd, setIsSavingCwd] = useState(false);
+  const [isSavingDefaultPath, setIsSavingDefaultPath] = useState(false);
   const onboardingRequired = useOnboardingRequired();
   const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -313,22 +315,28 @@ function App() {
               Cancel
             </Button>
             <Button
+              disabled={isSavingCwd}
               onClick={async () => {
                 if (!editingTab) {
                   closeCwdEditor();
                   return;
                 }
 
-                if (editingTab.sessionId && isTauriRuntimeAvailable()) {
-                  try {
-                    await invokeTauri<void>("kill_session", { sessionId: editingTab.sessionId });
-                  } catch {
-                    // Session can be already ended.
+                setIsSavingCwd(true);
+                try {
+                  if (editingTab.sessionId && isTauriRuntimeAvailable()) {
+                    try {
+                      await invokeTauri<void>("kill_session", { sessionId: editingTab.sessionId });
+                    } catch {
+                      // Session can be already ended.
+                    }
                   }
-                }
 
-                setTabCwd({ tabId: editingTab.id, cwd: tabPathDraft });
-                closeCwdEditor();
+                  setTabCwd({ tabId: editingTab.id, cwd: tabPathDraft });
+                  closeCwdEditor();
+                } finally {
+                  setIsSavingCwd(false);
+                }
               }}
             >
               Save
@@ -367,22 +375,30 @@ function App() {
               Later
             </Button>
             <Button
+              disabled={isSavingDefaultPath}
               onClick={async () => {
-                const nextCwd = defaultPathDraft.trim() || ".";
-                setDefaultCwd(nextCwd);
+                setIsSavingDefaultPath(true);
+                try {
+                  const nextCwd = defaultPathDraft.trim() || ".";
+                  setDefaultCwd(nextCwd);
 
-                if (focusedTab) {
-                  if (focusedTab.sessionId && isTauriRuntimeAvailable()) {
-                    try {
-                      await invokeTauri<void>("kill_session", { sessionId: focusedTab.sessionId });
-                    } catch {
-                      // Session can be already ended.
+                  if (focusedTab) {
+                    if (focusedTab.sessionId && isTauriRuntimeAvailable()) {
+                      try {
+                        await invokeTauri<void>("kill_session", {
+                          sessionId: focusedTab.sessionId,
+                        });
+                      } catch {
+                        // Session can be already ended.
+                      }
                     }
+                    setTabCwd({ tabId: focusedTab.id, cwd: nextCwd });
                   }
-                  setTabCwd({ tabId: focusedTab.id, cwd: nextCwd });
-                }
 
-                setIsDefaultPathOpen(false);
+                  setIsDefaultPathOpen(false);
+                } finally {
+                  setIsSavingDefaultPath(false);
+                }
               }}
             >
               Save

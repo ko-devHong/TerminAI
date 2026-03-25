@@ -248,6 +248,29 @@ async fn refresh_claude_access_token(refresh_token: &str) -> Option<Credential> 
     })
 }
 
+/// Persist a refreshed OAuth credential to ~/.claude/.credentials.json
+/// so subsequent API calls can reuse it without re-refreshing.
+fn persist_refreshed_credential(credential: &Credential) {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let creds_path = std::path::PathBuf::from(home)
+        .join(".claude")
+        .join(".credentials.json");
+
+    let json = serde_json::json!({
+        "claudeAiOauth": {
+            "accessToken": credential.token,
+            "refreshToken": credential.refresh_token,
+            "expiresAt": credential.expires_at_ms,
+        }
+    });
+
+    if let Ok(content) = serde_json::to_string_pretty(&json) {
+        let _ = std::fs::write(creds_path, content);
+    }
+}
+
 // ─── API Fetching ───────────────────────────────────────
 
 pub async fn fetch_claude_usage(credential: &Credential) -> Result<ProviderUsage, String> {
@@ -262,6 +285,9 @@ pub async fn fetch_claude_usage(credential: &Credential) -> Result<ProviderUsage
     if working_credential.is_oauth && is_expired(working_credential.expires_at_ms) {
         if let Some(refresh_token) = &working_credential.refresh_token {
             if let Some(refreshed) = refresh_claude_access_token(refresh_token).await {
+                // Persist the refreshed token to ~/.claude/.credentials.json
+                // so subsequent calls don't need to refresh again.
+                persist_refreshed_credential(&refreshed);
                 working_credential = refreshed;
             }
         }

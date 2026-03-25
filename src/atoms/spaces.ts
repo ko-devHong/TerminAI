@@ -7,6 +7,7 @@ import {
   INITIAL_SPACES,
   INITIAL_TABS,
 } from "@/lib/constants";
+import { invokeTauri, isTauriRuntimeAvailable } from "@/lib/tauri";
 import { disposeTerminalCache } from "@/lib/terminal-cache";
 import type { AIProvider, Space, Tab } from "@/types";
 
@@ -393,6 +394,10 @@ export const closeTabAtom = atom(null, (get, set, tabId: string) => {
   set(tabAtom(tabId), null);
   tabAtom.remove(tabId);
   if (targetTab.sessionId) {
+    // Kill the backend PTY session to prevent zombie processes
+    if (isTauriRuntimeAvailable()) {
+      void invokeTauri<void>("kill_session", { sessionId: targetTab.sessionId }).catch(() => {});
+    }
     hudMetricsAtom.remove(targetTab.sessionId);
     omcStateAtom.remove(targetTab.sessionId);
     gitBranchAtom.remove(targetTab.sessionId);

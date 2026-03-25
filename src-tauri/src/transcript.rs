@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::PathBuf;
 
 const MAX_ACTIVE_TOOLS: usize = 20;
+const MAX_ACTIVE_AGENTS: usize = 20;
 
 /// Permission-requiring tools that need explicit user approval.
 const PERMISSION_TOOLS: &[&str] = &["Edit", "Write", "Bash", "MultiEdit"];
@@ -195,8 +196,11 @@ impl TranscriptWatcher {
             self.active_tools.push_back(name.clone());
         }
 
-        // Track sub-agents
+        // Track sub-agents (bounded to prevent unbounded memory growth)
         if AGENT_TOOLS.contains(&name.as_str()) && !self.active_agents.contains(&name) {
+            if self.active_agents.len() >= MAX_ACTIVE_AGENTS {
+                self.active_agents.remove(0);
+            }
             self.active_agents.push(name.clone());
         }
 
@@ -204,6 +208,10 @@ impl TranscriptWatcher {
         if PERMISSION_TOOLS.contains(&name.as_str()) {
             if let Some(id) = tool_id {
                 if !self.pending_tool_ids.contains(&id) {
+                    // Prevent unbounded growth — evict oldest if at capacity
+                    if self.pending_tool_ids.len() >= MAX_ACTIVE_TOOLS {
+                        self.pending_tool_ids.remove(0);
+                    }
                     self.pending_tool_ids.push(id);
                 }
             } else {

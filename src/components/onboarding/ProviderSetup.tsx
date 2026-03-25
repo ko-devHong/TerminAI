@@ -64,6 +64,18 @@ export function ProviderSetup({ onComplete }: { onComplete: () => void }) {
   const setDefaultCwd = useSetAtom(defaultCwdAtom);
   const [cwdDraft, setCwdDraft] = useState(defaultCwd === "." ? "" : defaultCwd);
 
+  // Allow ESC to skip onboarding at any step
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        localStorage.setItem(ONBOARDING_KEY, "true");
+        onComplete();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onComplete]);
+
   // Detect installed providers
   const detectProviders = useCallback(async () => {
     if (!isTauriRuntimeAvailable()) return;
@@ -495,16 +507,17 @@ export function ProviderSetup({ onComplete }: { onComplete: () => void }) {
 
         {/* Footer navigation */}
         <div className="flex items-center justify-between border-t border-zinc-800/50 px-6 py-3">
-          {step > 0 ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-zinc-400"
-              onClick={() => setStep((s) => s - 1)}
-            >
-              Back
-            </Button>
-          ) : (
+          <div className="flex items-center gap-2">
+            {step > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-zinc-400"
+                onClick={() => setStep((s) => s - 1)}
+              >
+                Back
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -514,9 +527,9 @@ export function ProviderSetup({ onComplete }: { onComplete: () => void }) {
                 onComplete();
               }}
             >
-              Skip setup
+              Skip
             </Button>
-          )}
+          </div>
 
           {step === 4 ? (
             <Button size="sm" onClick={finishOnboarding}>

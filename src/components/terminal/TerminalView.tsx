@@ -179,9 +179,11 @@ export function TerminalView({ tabId, searchOpen = false, onSearchClose }: Termi
     } else {
       cached.terminal.open(container);
       cached.fitAddon.fit();
-      // Now that the terminal is open, upgrade to IME-aware input handling
-      upgradeToIMEInput(tabId, handleInput);
     }
+
+    // Ensure IME-aware input is active (safe to call multiple times).
+    // Must be called after terminal.open() so the hidden <textarea> exists.
+    upgradeToIMEInput(tabId, handleInput);
 
     // Keep keyboard focus in terminal so Enter/typing goes to PTY, not sidebar controls.
     window.requestAnimationFrame(() => {
@@ -275,6 +277,14 @@ export function TerminalView({ tabId, searchOpen = false, onSearchClose }: Termi
           cwd: tabCwd ?? ".",
         });
 
+        // Verify the tab still exists before updating (it may have been closed during spawn)
+        const postSpawnTab = store.get(tabAtom(currentTabId));
+        if (!postSpawnTab) {
+          // Tab was closed while spawning — kill the orphaned session
+          invokeTauri<void>("kill_session", { sessionId: spawnedSessionId }).catch(() => {});
+          return;
+        }
+
         cached.sessionId = spawnedSessionId;
         setTabSessionAndStatus(currentTabId, spawnedSessionId, "running");
 
@@ -304,7 +314,7 @@ export function TerminalView({ tabId, searchOpen = false, onSearchClose }: Termi
     }
 
     void ensureSession();
-  }, [setTabSessionAndStatus, tabId, tabSessionId, tabProcessStatus, tabProvider, tabCwd]);
+  }, [setTabSessionAndStatus, tabId, tabSessionId, tabProcessStatus, tabProvider, tabCwd, store]);
 
   const sessionId = tab?.sessionId ?? null;
 

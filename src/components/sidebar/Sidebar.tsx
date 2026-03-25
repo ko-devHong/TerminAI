@@ -10,7 +10,7 @@ import {
 } from "@dnd-kit/core";
 import { useAtomValue, useSetAtom } from "jotai";
 import { FolderCog, RotateCcw, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { sidebarCollapsedAtom, sidebarWidthAtom } from "@/atoms/settings";
 import { moveTabAtom, spacesAtom, tabAtom } from "@/atoms/spaces";
@@ -49,6 +49,16 @@ export function Sidebar({
   const moveTab = useSetAtom(moveTabAtom);
   const activeTabData = useAtomValue(tabAtom(activeTabId ?? "__none__"));
 
+  // Track resize cleanup function so we can call it on unmount
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      // Clean up any in-progress resize listeners on unmount
+      resizeCleanupRef.current?.();
+    };
+  }, []);
+
   const computedWidth = useMemo(() => {
     if (sidebarCollapsed) {
       return 0;
@@ -71,10 +81,12 @@ export function Sidebar({
     function onUp() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      resizeCleanupRef.current = null;
     }
 
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    resizeCleanupRef.current = onUp;
   }
 
   if (sidebarCollapsed) {
@@ -194,8 +206,8 @@ export function Sidebar({
             <span>Re-run Setup</span>
           </button>
 
-          <ScrollArea className="h-full">
-            <div className="space-y-3 pr-2">
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="space-y-3 pr-3">
               {spaces.map((space) => (
                 <SpaceGroup key={space.id} space={space} />
               ))}

@@ -8,6 +8,7 @@ export interface TerminalCache {
   searchAddon: SearchAddon;
   sessionId: string | null;
   dispose: () => void;
+  imeUpgraded: boolean;
 }
 
 export const terminalCacheMap = new Map<string, TerminalCache>();
@@ -30,35 +31,47 @@ function attachIMEAwareInput(
   onInput: (data: string, tabId: string) => void,
 ): () => void {
   let isComposing = false;
+  // Track the last composed text so we can deduplicate against xterm's onData.
+  // After compositionend, xterm may fire onData with the same composed text —
+  // we skip that exact match once and let subsequent keystrokes through immediately.
+  let lastComposedText: string | null = null;
 
   const onDataDisposable = terminal.onData((data) => {
     if (isComposing) {
       return;
     }
+    // After compositionend, xterm fires onData with the composed text.
+    // Skip that duplicate but allow all other keystrokes (space, enter, etc.) through.
+    if (lastComposedText !== null) {
+      if (data === lastComposedText) {
+        lastComposedText = null;
+        return;
+      }
+      // Different data — the duplicate either already came or won't come.
+      lastComposedText = null;
+    }
     onInput(data, tabId);
   });
 
-  // Debounce input sent via IME — wait 8ms so we batch rapid-fire events
-  let imeTimer: ReturnType<typeof setTimeout> | null = null;
-
   function onCompositionStart() {
     isComposing = true;
-    if (imeTimer) {
-      clearTimeout(imeTimer);
-      imeTimer = null;
-    }
+    lastComposedText = null;
   }
 
   function onCompositionEnd(event: CompositionEvent) {
     const composed = event.data;
-    // Small delay so xterm's internal handler runs first and we skip its onData
-    imeTimer = setTimeout(() => {
-      isComposing = false;
-      imeTimer = null;
-      if (composed) {
-        onInput(composed, tabId);
-      }
-    }, 10);
+    isComposing = false;
+
+    if (composed) {
+      // Remember the composed text to skip the duplicate onData that xterm fires
+      lastComposedText = composed;
+      onInput(composed, tabId);
+
+      // Safety: clear the dedup state after a short window in case onData never fires
+      setTimeout(() => {
+        lastComposedText = null;
+      }, 50);
+    }
   }
 
   // xterm.js creates a hidden <textarea> for capturing input.
@@ -71,7 +84,6 @@ function attachIMEAwareInput(
 
   return () => {
     onDataDisposable.dispose();
-    if (imeTimer) clearTimeout(imeTimer);
     if (textarea) {
       textarea.removeEventListener("compositionstart", onCompositionStart);
       textarea.removeEventListener("compositionend", onCompositionEnd);
@@ -120,6 +132,7 @@ export function getOrCreateTerminal(
     searchAddon,
     sessionId: null,
     dispose: () => onDataDisposable.dispose(),
+    imeUpgraded: false,
   };
 
   terminalCacheMap.set(tabId, cache);
@@ -129,6 +142,7 @@ export function getOrCreateTerminal(
 /**
  * Call this after `terminal.open(container)` so the hidden textarea exists.
  * Replaces the basic `onData` handler with an IME-aware one.
+ * Safe to call multiple times — will only upgrade once per terminal.
  */
 export function upgradeToIMEInput(
   tabId: string,
@@ -137,11 +151,15 @@ export function upgradeToIMEInput(
   const cached = terminalCacheMap.get(tabId);
   if (!cached) return;
 
+  // Already upgraded — skip to avoid stacking duplicate listeners
+  if (cached.imeUpgraded) return;
+
   // Dispose the basic onData listener
   cached.dispose();
 
   // Replace with IME-aware version
   cached.dispose = attachIMEAwareInput(cached.terminal, tabId, onInput);
+  cached.imeUpgraded = true;
 }
 
 export function disposeTerminalCache(tabId: string): void {

@@ -19,6 +19,9 @@ export function useUsagePolling(provider: AIProvider | null) {
   const failCountRef = useRef(0);
 
   useEffect(() => {
+    // Reset fail counter when provider changes
+    failCountRef.current = 0;
+
     if (!provider || !isTauriRuntimeAvailable()) {
       return;
     }

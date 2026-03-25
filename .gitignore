@@ -38,3 +38,4 @@ $TERMINAI_SL_PATH
 .omc/
 .serena/
 terminai-mcp-bridge/node_modules/
+.omx
